@@ -42,6 +42,18 @@ ACP 官方只提供 Kotlin / Python / Rust / TypeScript 的 SDK，没有 Go 版�
 所以 `internal/acp` 是按官方 v1 schema 自己实现的客户端（JSON-RPC over stdio，
 只用到 `initialize` / `session/new` / `session/prompt` / `session/update` 四个方法）。
 
+agent 能用哪些工具由 `agent_permission` 控制：
+
+| 值 | 允许 |
+|---|---|
+| `bypass`（默认） | 读文件、改代码、跑命令、联网，全部放行 |
+| `write` | 允许读和改文件，禁止执行命令与联网 |
+| `read` | 只读 |
+| `deny` | 全拒，agent 只能靠 prompt 里的上下文回答 |
+
+只能约束**会主动询问**的 agent：CodeBuddy 每次工具调用都发 `session/request_permission`，
+拦得住；pi-acp 内部直接放行，设成只读也拦不住它改文件——那种情况只能靠出稿后的 diff 看。
+
 agent 要读代码，得先告诉它仓库在本地哪：
 
 ```json
@@ -49,14 +61,18 @@ agent 要读代码，得先告诉它仓库在本地哪：
 "repo_paths": { "ayuayue/PiDeck": "D:/project/pideck" }
 ```
 
-留空的话会在配置目录下开一个空的 `work/<repo>`，agent 只能靠 prompt 里的上下文回答。
+可以映射任意多个仓库，一个仓库对应一个本地目录，互相独立。界面上会检查目录：
+不存在、不是目录、不是 git 仓库都会标出来（不是 git 仓库时 agent 照样能改文件，
+但改动记录不下来，也就没法在批准时提交到分支）。
+
+没映射的仓库会在配置目录下开一个空的 `work/<repo>`，agent 只能靠 prompt 里的上下文回答。
 
 界面上每条草稿都能「换 agent 重做」：同一个 prompt 换一个 agent 再出一遍，方便对比；
 也可以「编辑」就地改正文再发。
 
 ### agent 改代码
 
-工作目录是 git 仓库时，agent 会被告知「你可以直接改」，并自动获得工具授权。
+工作目录是 git 仓库时，agent 会被告知「你可以直接改」，工具授权按上面的 `agent_permission` 决定。
 每轮出稿前后各取一次工作区快照，算出这次改了哪些文件，草稿上会多一个「代码改动」区块：
 文件清单 + 可展开的 unified diff。
 

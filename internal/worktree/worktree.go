@@ -21,6 +21,15 @@ type Snapshot struct {
 	DiffHash string
 }
 
+// IsRepo 判断目录是不是 git 仓库的工作区（不含 .git 的普通目录也不算）。
+func IsRepo(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	_, err := git(dir, "rev-parse", "--show-toplevel")
+	return err == nil
+}
+
 // Capture 取一次快照。目录不是 git 仓库时返回零值。
 func Capture(dir string) Snapshot {
 	if strings.TrimSpace(dir) == "" {

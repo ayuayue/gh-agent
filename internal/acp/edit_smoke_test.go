@@ -86,3 +86,37 @@ func TestSmokeAgentEditsRepo(t *testing.T) {
 		t.Errorf("文件应该真的落在工作区：%v", err)
 	}
 }
+
+// TestSmokePolicyBlocksWrite 验证权限策略真的拦得住。
+// 跑法：ACP_POLICY=codebuddy go test ./internal/acp -run TestSmokePolicyBlocksWrite -v
+func TestSmokePolicyBlocksWrite(t *testing.T) {
+	id := os.Getenv("ACP_POLICY")
+	if id == "" {
+		t.Skip("设置 ACP_POLICY=codebuddy 才跑")
+	}
+	dir := smokeRepo(t)
+
+	resp := &acp.Responder{
+		AgentID: id,
+		Workdir: func(string) string { return dir },
+		Policy:  acp.PolicyRead,
+		Timeout: 6 * time.Minute,
+		Logf:    t.Logf,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+	defer cancel()
+
+	_, err := resp.Respond(ctx, agent.Request{
+		Repo:   "o/r",
+		System: "你在一个仓库里工作。",
+		User:   "在当前仓库根目录新建文件 BLOCKED.md，内容写 hi。只回一句话。",
+	})
+	if err != nil {
+		t.Logf("返回错误（正常，被拦住后 agent 常常报错）：%v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "BLOCKED.md")); err == nil {
+		t.Error("只读策略下不该真的创建文件")
+	}
+}

@@ -34,6 +34,8 @@ export interface ConfigDTO {
   temperature: number;
   /** Agent 是默认出稿方：llm / codebuddy / pi。 */
   agent: string;
+  /** AgentPermission 是本地 agent 的工具权限：bypass / write / read / deny。 */
+  agentPermission: string;
   /** RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。 */
   repoPaths: Record<string, string>;
 }
@@ -67,6 +69,15 @@ export interface LogLine {
   at: string;
   level: string;
   text: string;
+}
+
+/** PathCheck 是本地目录的检查结果。 */
+export interface PathCheck {
+  path: string;
+  exists: boolean;
+  isGit: boolean;
+  /** Detail 是给人看的说明，ok 时为空。 */
+  detail: string;
 }
 
 /** Result 是一次比对的结果，直接塞进草稿给界面。 */
@@ -107,6 +118,10 @@ export const Service = {
    */
   approve(id: string): Promise<Draft> {
     return call("Service.Approve", id);
+  },
+  /** CheckPath 检查一个本地目录能不能当 agent 的工作目录用。 */
+  checkPath(path: string): Promise<PathCheck> {
+    return call("Service.CheckPath", path);
   },
   /** Config 返回当前配置。 */
   config(): Promise<ConfigDTO> {

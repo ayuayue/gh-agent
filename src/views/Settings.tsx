@@ -1,6 +1,13 @@
-import { useEffect, useState } from "react";
-import { CheckIcon } from "../icons";
-import { Service, type AgentInfo, type ConfigDTO } from "../mygo";
+import { useEffect, useMemo, useState } from "react";
+import { CheckIcon, XIcon } from "../icons";
+import { Service, type AgentInfo, type ConfigDTO, type PathCheck } from "../mygo";
+
+const PERMISSIONS = [
+  { id: "bypass", name: "全部放行", desc: "读文件、改代码、跑命令、联网都直接允许" },
+  { id: "write", name: "读写文件", desc: "允许读和改文件，禁止执行命令与联网" },
+  { id: "read", name: "只读", desc: "只允许读，禁止改文件和执行命令" },
+  { id: "deny", name: "全部拒绝", desc: "工具全禁，agent 只能靠 prompt 里的上下文回答" },
+];
 
 export default function Settings({
   config,
@@ -11,6 +18,9 @@ export default function Settings({
 }) {
   const [form, setForm] = useState(config);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [checks, setChecks] = useState<Record<string, PathCheck>>({});
+  const [newRepo, setNewRepo] = useState("");
+  const [newPath, setNewPath] = useState("");
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,8 +34,46 @@ export default function Settings({
   const set = <K extends keyof ConfigDTO>(key: K, value: ConfigDTO[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const mappings = useMemo(
+    () => Object.entries(form.repoPaths).sort(([a], [b]) => a.localeCompare(b)),
+    [form.repoPaths],
+  );
+
+  // 目录一变就重新检查：是不是存在、是不是 git 仓库。
+  const pathKey = mappings.map(([, p]) => p).join("|");
+  useEffect(() => {
+    let alive = true;
+    const paths = [...new Set(mappings.map(([, p]) => p).filter(Boolean))];
+    Promise.all(paths.map((p) => Service.checkPath(p).then((r) => [p, r] as const)))
+      .then((pairs) => {
+        if (!alive) return;
+        setChecks(Object.fromEntries(pairs));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathKey]);
+
   const setPath = (repo: string, path: string) =>
     setForm((f) => ({ ...f, repoPaths: { ...f.repoPaths, [repo]: path } }));
+
+  const removePath = (repo: string) =>
+    setForm((f) => {
+      const next = { ...f.repoPaths };
+      delete next[repo];
+      return { ...f, repoPaths: next };
+    });
+
+  const addMapping = () => {
+    const repo = newRepo.trim();
+    const path = newPath.trim();
+    if (!repo || !path) return;
+    setPath(repo, path);
+    setNewRepo("");
+    setNewPath("");
+  };
 
   const dirty = JSON.stringify(form) !== JSON.stringify(config);
 
@@ -95,7 +143,105 @@ export default function Settings({
       </section>
 
       <section className="field-group">
-        <header>仓库与轮询</header>
+        <header>工具权限（只对本地 agent 生效）</header>
+        <div className="body">
+          <div className="agent-list">
+            {PERMISSIONS.map((p) => (
+              <label
+                key={p.id}
+                className="agent-option"
+                data-selected={form.agentPermission === p.id}
+              >
+                <input
+                  type="radio"
+                  name="permission"
+                  value={p.id}
+                  checked={form.agentPermission === p.id}
+                  onChange={() => set("agentPermission", p.id)}
+                />
+                <span className="agent-body">
+                  <span className="agent-name">
+                    {p.name}
+                    <code className="perm-id">{p.id}</code>
+                    {form.agentPermission === p.id && <CheckIcon size={13} />}
+                  </span>
+                  <span className="agent-desc">{p.desc}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <span className="hint" style={{ gridColumn: "1 / -1" }}>
+            只能约束「会主动询问」的 agent：CodeBuddy 每次都问，pi-acp 内部直接放行，
+            设成只读也拦不住它改文件——那种情况只能靠出稿后的 diff 看它做了什么。
+          </span>
+        </div>
+      </section>
+
+      <section className="field-group">
+        <header>仓库 → 本地目录</header>
+        <div className="body">
+          <div className="map-list">
+            {mappings.length === 0 && (
+              <p className="map-empty">还没有映射。本地 agent 要有本地克隆才能读代码。</p>
+            )}
+            {mappings.map(([repo, path]) => {
+              const check = checks[path];
+              return (
+                <div className="map-row" key={repo}>
+                  <code className="map-repo">{repo}</code>
+                  <input
+                    value={path}
+                    onChange={(e) => setPath(repo, e.target.value)}
+                    placeholder="D:/project/xxx"
+                    spellCheck={false}
+                  />
+                  <span
+                    className={
+                      check ? (check.isGit ? "map-state ok" : "map-state warn") : "map-state"
+                    }
+                    title={check?.detail ?? ""}
+                  >
+                    {check ? (check.isGit ? "git 仓库" : check.detail) : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="ghost icon-only"
+                    onClick={() => removePath(repo)}
+                    title="移除映射"
+                  >
+                    <XIcon size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="map-row map-add">
+            <input
+              value={newRepo}
+              onChange={(e) => setNewRepo(e.target.value)}
+              placeholder="owner/name"
+              spellCheck={false}
+            />
+            <input
+              value={newPath}
+              onChange={(e) => setNewPath(e.target.value)}
+              placeholder="D:/project/xxx"
+              spellCheck={false}
+            />
+            <button type="button" onClick={addMapping} disabled={!newRepo.trim() || !newPath.trim()}>
+              添加
+            </button>
+          </div>
+
+          <span className="hint" style={{ gridColumn: "1 / -1" }}>
+            可以映射任意多个仓库。没映射的仓库会用配置目录下的空目录，agent 只能靠上下文作答。
+          </span>
+        </div>
+      </section>
+
+      <section className="field-group">
+        <header>轮询</header>
         <div className="body">
           <label className="field" style={{ gridColumn: "1 / -1" }}>
             <span>监控的仓库</span>
@@ -113,21 +259,8 @@ export default function Settings({
               placeholder="owner/name, owner/name"
               spellCheck={false}
             />
-            <span className="hint">多个仓库用逗号分隔</span>
+            <span className="hint">多个仓库用逗号分隔，跟上面的映射独立</span>
           </label>
-
-          {form.repos.map((repo) => (
-            <label className="field" key={repo} style={{ gridColumn: "1 / -1" }}>
-              <span>{repo} 的本地目录</span>
-              <input
-                value={form.repoPaths[repo] ?? ""}
-                onChange={(e) => setPath(repo, e.target.value)}
-                placeholder="D:/project/xxx（留空则用配置目录下的空目录）"
-                spellCheck={false}
-              />
-              <span className="hint">本地 agent 在这个目录里读代码、跑命令</span>
-            </label>
-          ))}
 
           <label className="field">
             <span>轮询间隔</span>

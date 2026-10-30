@@ -41,6 +41,9 @@ type Config struct {
 	InstructionsFile    string   `json:"instructions_file"`
 	// Agent 决定谁出稿："llm"（默认，打 provider 端点）或本地 agent 的 id（pi / codebuddy）。
 	Agent string `json:"agent"`
+	// AgentPermission 控制本地 agent 能用哪些工具：
+	// bypass（全部放行）/ write（读写文件，禁命令）/ read（只读）/ deny（全拒）。
+	AgentPermission string `json:"agent_permission"`
 	// RepoPaths 把仓库映射到本地工作目录；本地 agent 在这个目录里跑，
 	// 才能读代码、跑命令。留空则用配置目录下的 work/<repo> 空目录。
 	RepoPaths map[string]string `json:"repo_paths"`
@@ -69,6 +72,7 @@ func Default() Config {
 		Signature:        "*本条由本地 AI 助手自动生成，结论请以代码为准。*",
 		InstructionsFile: "",
 		Agent:            "llm",
+		AgentPermission:  "bypass",
 		RepoPaths:        map[string]string{},
 	}
 }
@@ -186,6 +190,16 @@ func (c *Config) Validate() error {
 	c.Agent = strings.TrimSpace(c.Agent)
 	if c.Agent == "" {
 		c.Agent = "llm"
+	}
+	c.AgentPermission = strings.TrimSpace(strings.ToLower(c.AgentPermission))
+	switch c.AgentPermission {
+	case "bypass", "write", "read":
+		// ok
+	case "deny":
+		// ok
+	default:
+		// 老配置没这个字段，保持原有行为（全部放行），不要突然把 agent 卡死。
+		c.AgentPermission = "bypass"
 	}
 	if c.RepoPaths == nil {
 		c.RepoPaths = map[string]string{}

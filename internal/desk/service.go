@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -289,6 +290,31 @@ func (s *Service) Reject(id string) (Draft, error) {
 	return out, nil
 }
 
+// CheckPath 检查一个本地目录能不能当 agent 的工作目录用。
+func (s *Service) CheckPath(path string) PathCheck {
+	out := PathCheck{Path: strings.TrimSpace(path)}
+	if out.Path == "" {
+		out.Detail = "留空则用配置目录下的空目录，agent 读不到代码"
+		return out
+	}
+	info, err := os.Stat(out.Path)
+	if err != nil {
+		out.Detail = "目录不存在"
+		return out
+	}
+	if !info.IsDir() {
+		out.Detail = "不是目录"
+		return out
+	}
+	out.Exists = true
+	if !worktree.IsRepo(out.Path) {
+		out.Detail = "不是 git 仓库，agent 改了什么不会被记录"
+		return out
+	}
+	out.IsGit = true
+	return out
+}
+
 // Agents 列出可选的出稿方：模型端点 + 检测到的本地 agent。
 func (s *Service) Agents() []AgentInfo {
 	s.mu.Lock()
@@ -486,6 +512,10 @@ func (s *Service) statusLocked() StatusDTO {
 }
 
 func toDTO(c config.Config) ConfigDTO {
+	perm := c.AgentPermission
+	if perm == "" {
+		perm = "bypass"
+	}
 	return ConfigDTO{
 		Repos:               c.Repos,
 		IntervalSeconds:     c.IntervalSeconds,
@@ -502,6 +532,7 @@ func toDTO(c config.Config) ConfigDTO {
 		MaxOutputTokens:     c.Provider.MaxOutputTokens,
 		Temperature:         c.Provider.Temperature,
 		Agent:               c.Agent,
+		AgentPermission:     perm,
 		RepoPaths:           c.RepoPaths,
 	}
 }
@@ -522,6 +553,7 @@ func applyDTO(c config.Config, in ConfigDTO) config.Config {
 	c.Provider.MaxOutputTokens = in.MaxOutputTokens
 	c.Provider.Temperature = in.Temperature
 	c.Agent = in.Agent
+	c.AgentPermission = in.AgentPermission
 	if in.RepoPaths != nil {
 		c.RepoPaths = in.RepoPaths
 	}

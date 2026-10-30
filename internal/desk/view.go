@@ -23,6 +23,8 @@ type ConfigDTO struct {
 	Temperature         float64  `json:"temperature"`
 	// Agent 是默认出稿方：llm / codebuddy / pi。
 	Agent string `json:"agent"`
+	// AgentPermission 是本地 agent 的工具权限：bypass / write / read / deny。
+	AgentPermission string `json:"agentPermission"`
 	// RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。
 	RepoPaths map[string]string `json:"repoPaths"`
 }
@@ -60,6 +62,15 @@ type Draft struct {
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`
+}
+
+// PathCheck 是本地目录的检查结果。
+type PathCheck struct {
+	Path   string `json:"path"`
+	Exists bool   `json:"exists"`
+	IsGit  bool   `json:"isGit"`
+	// Detail 是给人看的说明，ok 时为空。
+	Detail string `json:"detail"`
 }
 
 // AgentInfo 是一个可选的出稿方，给界面上的下拉框用。

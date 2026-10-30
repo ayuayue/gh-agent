@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ type Responder struct {
 	AgentID string
 	// Workdir 返回这个仓库的本地工作目录；返回空则报错。
 	Workdir func(repo string) string
+	// Policy 决定 agent 能用哪些工具。
+	Policy Policy
 	// Timeout 是单轮出稿的上限。
 	Timeout time.Duration
 	Logf    func(format string, args ...any)
@@ -46,8 +49,14 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	if cwd == "" {
 		return agent.Reply{}, fmt.Errorf("%s 需要一个本地工作目录", def.Name)
 	}
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		return agent.Reply{}, fmt.Errorf("工作目录 %s 不可用：%v", cwd, err)
+	}
 
 	before := worktree.Capture(cwd)
+	if !before.Repo && r.Logf != nil {
+		r.Logf("工作目录 %s 不是 git 仓库：agent 读不到代码，也不会记录改动", cwd)
+	}
 	system := req.System
 	if before.Repo {
 		system += "\n\n" + codeInstruction
@@ -60,8 +69,11 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// 出稿场景必须放行工具：读文件、改代码都要客户端点头。
-	client, err := Start(runCtx, def.Command, cwd, WithAutoApprove())
+	policy := r.Policy
+	if policy == "" {
+		policy = PolicyDeny
+	}
+	client, err := Start(runCtx, def.Command, cwd, WithPolicy(policy))
 	if err != nil {
 		return agent.Reply{}, fmt.Errorf("%s 启动失败：%w", def.Name, err)
 	}
@@ -73,6 +85,9 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	}
 	if tools := client.Tools(); len(tools) > 0 && r.Logf != nil {
 		r.Logf("%s 用了 %d 个工具：%s", def.Name, len(tools), strings.Join(tools, "、"))
+	}
+	if denied := client.Denied(); len(denied) > 0 && r.Logf != nil {
+		r.Logf("按权限策略拦下 %d 个工具调用：%s", len(denied), strings.Join(denied, "、"))
 	}
 
 	reply := agent.Reply{Text: out}

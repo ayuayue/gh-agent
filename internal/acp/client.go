@@ -44,17 +44,17 @@ type Client struct {
 	closeOnce sync.Once
 	done      chan struct{}
 
-	// autoApprove 为真时自动同意 agent 的工具调用（改文件、跑命令）。
-	autoApprove bool
+	// policy 决定怎么答复 agent 的工具授权请求。
+	policy Policy
+	denied []string
 }
 
 // Option 配置 Client 的行为。
 type Option func(*Client)
 
-// WithAutoApprove 允许 agent 不经询问就使用工具。
-// 出稿场景需要它：agent 读文件、改代码都要客户端点头。
-func WithAutoApprove() Option {
-	return func(c *Client) { c.autoApprove = true }
+// WithPolicy 设置工具授权策略。不设置时按 deny 处理，什么工具都不放行。
+func WithPolicy(p Policy) Option {
+	return func(c *Client) { c.policy = p }
 }
 
 type rpcReply struct {
@@ -182,6 +182,7 @@ func (c *Client) Prompt(ctx context.Context, text string, onChunk func(string)) 
 
 	c.mu.Lock()
 	c.tools = c.tools[:0]
+	c.denied = c.denied[:0]
 	c.mu.Unlock()
 
 	_, err := c.call(ctx, "session/prompt", map[string]any{
@@ -322,12 +323,15 @@ func (c *Client) deliver(id *json.Number, result json.RawMessage, errPayload *js
 	ch <- rpcReply{result: result}
 }
 
-// handlePermission 答复 agent 的工具授权请求。
-// 自动同意时优先选 allow_once（不扩大授权范围）；没有放行选项就选拒绝。
+// handlePermission 答复 agent 的工具授权请求：按策略放行或拒绝。
 func (c *Client) handlePermission(id *json.Number, raw json.RawMessage) {
 	var req struct {
 		ToolCall struct {
 			Title string `json:"title"`
+			Kind  string `json:"kind"`
+			Meta  struct {
+				ToolName string `json:"codebuddy.ai/toolName"`
+			} `json:"_meta"`
 		} `json:"toolCall"`
 		Options []struct {
 			OptionID string `json:"optionId"`
@@ -347,22 +351,38 @@ func (c *Client) handlePermission(id *json.Number, raw json.RawMessage) {
 		return ""
 	}
 
+	name := req.ToolCall.Title
+	if name == "" {
+		name = req.ToolCall.Meta.ToolName
+	}
+	class := ClassifyTool(req.ToolCall.Kind, req.ToolCall.Meta.ToolName, req.ToolCall.Title)
+
 	choice := pick("reject_once", "reject_always")
-	if c.autoApprove {
+	if c.policy.Allows(class) {
 		if allow := pick("allow_once", "allow_always"); allow != "" {
 			choice = allow
 			c.mu.Lock()
-			if req.ToolCall.Title != "" {
-				c.tools = append(c.tools, req.ToolCall.Title)
-			}
+			c.tools = append(c.tools, name)
 			c.mu.Unlock()
 		}
+	} else {
+		c.mu.Lock()
+		c.denied = append(c.denied, name+"（"+string(class)+"）")
+		c.mu.Unlock()
 	}
+
 	if choice == "" {
 		c.replyError(id, -32601, "no permission option")
 		return
 	}
 	c.reply(id, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": choice}})
+}
+
+// Denied 返回被策略拦下的工具调用，用来告诉用户"它想干什么但没让干"。
+func (c *Client) Denied() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.denied...)
 }
 
 func (c *Client) reply(id *json.Number, result any) {
