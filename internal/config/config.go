@@ -69,7 +69,7 @@ func Default() Config {
 			MaxOutputTokens: 1200,
 			Temperature:     0.2,
 		},
-		Signature:        "*本条由 agent 协助生成，结论请以代码为准。*",
+		Signature:        "*由 agent 协助生成*",
 		InstructionsFile: "",
 		Agent:            "llm",
 		AgentPermission:  "bypass",
