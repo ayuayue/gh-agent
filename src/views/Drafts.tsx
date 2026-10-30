@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckIcon, ChevronIcon, ExternalIcon, InboxIcon, RefreshIcon, XIcon } from "../icons";
 import Markdown from "../Markdown";
 import { Service, type AgentInfo, type Draft } from "../mygo";
+import Changes from "./Changes";
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "待审",
@@ -163,6 +164,8 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
                 {open ? "收起" : "展开全文"}
               </button>
             )}
+
+            {!isEditing && d.changes && <Changes changes={d.changes} />}
 
             <div className="draft-foot">
               {isEditing ? (

@@ -181,8 +181,9 @@ func agentWorkdir(cfg config.Config, repo string) string {
 // 这样 llm 包不用反向依赖 agent。
 type llmResponder struct{ client *llm.Client }
 
-func (r llmResponder) Respond(ctx context.Context, req agent.Request) (string, error) {
-	return r.client.Chat(ctx, req.System, req.User)
+func (r llmResponder) Respond(ctx context.Context, req agent.Request) (agent.Reply, error) {
+	text, err := r.client.Chat(ctx, req.System, req.User)
+	return agent.Reply{Text: text}, err
 }
 
 func (r llmResponder) Label() string { return r.client.Model }

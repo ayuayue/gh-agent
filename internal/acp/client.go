@@ -43,6 +43,18 @@ type Client struct {
 
 	closeOnce sync.Once
 	done      chan struct{}
+
+	// autoApprove 为真时自动同意 agent 的工具调用（改文件、跑命令）。
+	autoApprove bool
+}
+
+// Option 配置 Client 的行为。
+type Option func(*Client)
+
+// WithAutoApprove 允许 agent 不经询问就使用工具。
+// 出稿场景需要它：agent 读文件、改代码都要客户端点头。
+func WithAutoApprove() Option {
+	return func(c *Client) { c.autoApprove = true }
 }
 
 type rpcReply struct {
@@ -79,7 +91,7 @@ func (t *tailBuffer) String() string {
 }
 
 // Start 拉起 agent 进程并完成 initialize + session/new。
-func Start(ctx context.Context, command, cwd string) (*Client, error) {
+func Start(ctx context.Context, command, cwd string, opts ...Option) (*Client, error) {
 	if strings.TrimSpace(command) == "" {
 		return nil, errors.New("agent 命令为空")
 	}
@@ -107,6 +119,9 @@ func Start(ctx context.Context, command, cwd string) (*Client, error) {
 		stderr:  tail,
 		pending: make(map[int64]chan rpcReply),
 		done:    make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(c)
 	}
 	go c.readLoop(stdout)
 	go func() {
@@ -240,8 +255,12 @@ func (c *Client) readLoop(r io.Reader) {
 				c.deliver(msg.ID, msg.Result, msg.Error)
 				continue
 			}
-			// agent 反向请求（权限、文件、终端）：我们没声明这些能力，一律拒绝。
-			c.replyError(msg.ID, -32601, "client does not support "+msg.Method)
+			// agent 反向请求：权限按策略回，其余能力我们没声明，一律拒绝。
+			if msg.Method == "session/request_permission" {
+				c.handlePermission(msg.ID, msg.Params)
+			} else {
+				c.replyError(msg.ID, -32601, "client does not support "+msg.Method)
+			}
 			continue
 		}
 
@@ -301,6 +320,56 @@ func (c *Client) deliver(id *json.Number, result json.RawMessage, errPayload *js
 		return
 	}
 	ch <- rpcReply{result: result}
+}
+
+// handlePermission 答复 agent 的工具授权请求。
+// 自动同意时优先选 allow_once（不扩大授权范围）；没有放行选项就选拒绝。
+func (c *Client) handlePermission(id *json.Number, raw json.RawMessage) {
+	var req struct {
+		ToolCall struct {
+			Title string `json:"title"`
+		} `json:"toolCall"`
+		Options []struct {
+			OptionID string `json:"optionId"`
+			Kind     string `json:"kind"`
+		} `json:"options"`
+	}
+	_ = json.Unmarshal(raw, &req)
+
+	pick := func(kinds ...string) string {
+		for _, want := range kinds {
+			for _, o := range req.Options {
+				if o.Kind == want {
+					return o.OptionID
+				}
+			}
+		}
+		return ""
+	}
+
+	choice := pick("reject_once", "reject_always")
+	if c.autoApprove {
+		if allow := pick("allow_once", "allow_always"); allow != "" {
+			choice = allow
+			c.mu.Lock()
+			if req.ToolCall.Title != "" {
+				c.tools = append(c.tools, req.ToolCall.Title)
+			}
+			c.mu.Unlock()
+		}
+	}
+	if choice == "" {
+		c.replyError(id, -32601, "no permission option")
+		return
+	}
+	c.reply(id, map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": choice}})
+}
+
+func (c *Client) reply(id *json.Number, result any) {
+	payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	c.mu.Lock()
+	_, _ = c.stdin.Write(append(payload, '\n'))
+	c.mu.Unlock()
 }
 
 func (c *Client) replyError(id *json.Number, code int, message string) {

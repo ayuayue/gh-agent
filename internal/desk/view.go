@@ -1,6 +1,9 @@
 package desk
 
-import "github.com/egoist/mygo"
+import (
+	"github.com/ayuayue/gh-agent/internal/worktree"
+	"github.com/egoist/mygo"
+)
 
 // ConfigDTO 是前端看到的配置。token 不在这里：它来自 GH_TOKEN 或 gh auth。
 type ConfigDTO struct {
@@ -48,7 +51,9 @@ type Draft struct {
 	// Agent 是产出这条草稿的 agent 名字。
 	Agent string `json:"agent"`
 	// Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。
-	Prompt    string `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。
+	Changes   *worktree.Result `json:"changes,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`

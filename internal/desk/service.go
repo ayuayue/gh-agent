@@ -284,7 +284,7 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 	if err != nil {
 		return d, err
 	}
-	body := agent.Finalize(out, cfg.Signature)
+	body := agent.Finalize(out.Text, cfg.Signature)
 	if body == "" {
 		return d, errors.New("agent 返回了空正文")
 	}
@@ -293,6 +293,7 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		x.Body = body
 		x.Agent = responder.Label()
 		x.CreatedAt = time.Now().Format(time.RFC3339)
+		x.Changes = out.Changes
 		x.Error = ""
 	})
 	EventDraft.Broadcast(updated)
@@ -382,6 +383,7 @@ func (s *Service) enqueue(in agent.DraftInput) error {
 		Body:       in.Body,
 		Agent:      in.Agent,
 		Prompt:     in.Prompt,
+		Changes:    in.Changes,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 		Status:     "pending",
 	}

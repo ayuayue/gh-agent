@@ -52,6 +52,8 @@ export interface Draft {
   agent: string;
   /** Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。 */
   prompt?: string;
+  /** Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。 */
+  changes?: Result;
   createdAt: string;
   status: string;
   error?: string;
@@ -62,6 +64,18 @@ export interface LogLine {
   at: string;
   level: string;
   text: string;
+}
+
+/** Result 是一次比对的结果，直接塞进草稿给界面。 */
+export interface Result {
+  /** Files 是改动过的路径。 */
+  files: string[];
+  /** Untracked 是其中新建、还没被 git 跟踪的文件（diff 里没有正文）。 */
+  untracked: string[];
+  /** Diff 是 unified diff，已按上限截断。 */
+  diff: string;
+  /** DirtyBefore 表示跑之前工作区就有改动，diff 里可能混着人自己的修改。 */
+  dirtyBefore: boolean;
 }
 
 /** StatusDTO 是轮询的当前状态。 */

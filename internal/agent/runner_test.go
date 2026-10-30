@@ -20,8 +20,9 @@ import (
 // llmResponder 把 llm.Client 适配成 agent.Responder，测试里只需要这一层。
 type llmResponder struct{ c *llm.Client }
 
-func (r llmResponder) Respond(ctx context.Context, req agent.Request) (string, error) {
-	return r.c.Chat(ctx, req.System, req.User)
+func (r llmResponder) Respond(ctx context.Context, req agent.Request) (agent.Reply, error) {
+	text, err := r.c.Chat(ctx, req.System, req.User)
+	return agent.Reply{Text: text}, err
 }
 
 func (r llmResponder) Label() string { return r.c.Model }

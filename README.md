@@ -54,6 +54,23 @@ agent 要读代码，得先告诉它仓库在本地哪：
 界面上每条草稿都能「换 agent 重做」：同一个 prompt 换一个 agent 再出一遍，方便对比；
 也可以「编辑」就地改正文再发。
 
+### agent 改代码
+
+工作目录是 git 仓库时，agent 会被告知「你可以直接改」，并自动获得工具授权。
+每轮出稿前后各取一次工作区快照，算出这次改了哪些文件，草稿上会多一个「代码改动」区块：
+文件清单 + 可展开的 unified diff。
+
+两条安全约定：
+
+- **绝不提交**：不 commit、不建分支、不碰索引，改动只留在工作区。
+- **跑之前脏就说明**：如果工作区原本就有未提交的修改，diff 里会标出「可能混着你自己改的内容」。
+
+想看 agent 真能改代码，可以手动跑：
+
+```bash
+ACP_EDIT=codebuddy go test ./internal/acp -run TestSmokeAgentEditsRepo -v
+```
+
 ## CLI
 
 ```bash

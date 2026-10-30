@@ -8,6 +8,7 @@ import (
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
 	"github.com/ayuayue/gh-agent/internal/state"
+	"github.com/ayuayue/gh-agent/internal/worktree"
 )
 
 // Runner 把配置、GitHub、模型、状态串成"跑一轮"。
@@ -35,6 +36,8 @@ type DraftInput struct {
 	Body    string
 	Agent   string
 	Prompt  string
+	// Changes 非空表示这一轮动过工作区。
+	Changes *worktree.Result
 }
 
 // OnDraftFunc 接管出稿结果。
@@ -106,7 +109,7 @@ func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, com
 	if err != nil {
 		return err
 	}
-	body := Finalize(reply, r.Config.Signature)
+	body := Finalize(reply.Text, r.Config.Signature)
 	if body == "" {
 		repoState.Mark(comment.ID)
 		return nil
@@ -119,6 +122,7 @@ func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, com
 			Body:    body,
 			Agent:   r.Responder.Label(),
 			Prompt:  prompt,
+			Changes: reply.Changes,
 		}); err != nil {
 			return err
 		}
