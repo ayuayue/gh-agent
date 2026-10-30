@@ -192,6 +192,7 @@ func (s *Service) Start() (StatusDTO, error) {
 		return s.failStart(err)
 	}
 	runner.OnTask = s.onTask
+	runner.OnItem = s.onItem
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s.mu.Lock()

@@ -20,12 +20,17 @@ import (
 // maxSeen 是每个仓库保留的已处理 id 数量上限。
 const maxSeen = 1000
 
+// maxSeenIssues 是「无评论条目审查」模式下保留的条目号数量。
+const maxSeenIssues = 500
+
 // Repo 是单仓库的轮询状态。
 type Repo struct {
 	mu sync.RWMutex
 
 	Cursor string  `json:"cursor,omitempty"`
 	Seen   []int64 `json:"seen,omitempty"`
+	// SeenIssues 是触发词留空模式下已审查过的条目号：无评论的条目只审一次。
+	SeenIssues []int `json:"seen_issues,omitempty"`
 	// Ignored 是手动忽略的评论：id → 备注。
 	Ignored map[int64]string `json:"ignored,omitempty"`
 	// IgnoredIssues 是手动忽略的条目：issue/PR 编号 → 备注，整个条目不再处理。
@@ -55,6 +60,7 @@ func Load(path string) *State {
 type repoJSON struct {
 	Cursor        string           `json:"cursor,omitempty"`
 	Seen          []int64          `json:"seen,omitempty"`
+	SeenIssues    []int            `json:"seen_issues,omitempty"`
 	Ignored       map[int64]string `json:"ignored,omitempty"`
 	IgnoredIssues map[int]string   `json:"ignored_issues,omitempty"`
 }
@@ -109,6 +115,7 @@ func (r *Repo) snapshot() repoJSON {
 	defer r.mu.RUnlock()
 	out := repoJSON{Cursor: r.Cursor}
 	out.Seen = append(out.Seen, r.Seen...)
+	out.SeenIssues = append(out.SeenIssues, r.SeenIssues...)
 	if len(r.Ignored) > 0 {
 		out.Ignored = make(map[int64]string, len(r.Ignored))
 		for id, note := range r.Ignored {
@@ -150,6 +157,33 @@ func (r *Repo) Mark(id int64) {
 	r.Seen = append(r.Seen, id)
 	if len(r.Seen) > maxSeen {
 		r.Seen = r.Seen[len(r.Seen)-maxSeen:]
+	}
+}
+
+// HasIssue 报告这个条目在「无评论审查」模式下是否已经处理过。
+func (r *Repo) HasIssue(number int) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, seen := range r.SeenIssues {
+		if seen == number {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkIssue 记录一个已审查的条目（保持环形上限）。
+func (r *Repo) MarkIssue(number int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, seen := range r.SeenIssues {
+		if seen == number {
+			return
+		}
+	}
+	r.SeenIssues = append(r.SeenIssues, number)
+	if len(r.SeenIssues) > maxSeenIssues {
+		r.SeenIssues = r.SeenIssues[len(r.SeenIssues)-maxSeenIssues:]
 	}
 }
 

@@ -267,7 +267,7 @@ export default function Items({
                         <span>·</span>
                         <span>{item.comments} 条评论</span>
                         <span>·</span>
-                        <span>{fmtTime(item.updatedAt)}</span>
+                        <span title={"更新 " + fmtTime(item.updatedAt)}>创建 {fmtTime(item.createdAt)}</span>
                         {item.ignoreNote && <span className="item-note">备注：{item.ignoreNote}</span>}
                         <span className="spacer" />
                         <button className="ghost" onClick={() => toggle(item.id)}>

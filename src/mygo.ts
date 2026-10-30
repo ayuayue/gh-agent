@@ -106,6 +106,7 @@ export interface Item {
   labels: string[];
   author: string;
   comments: number;
+  createdAt: string;
   updatedAt: string;
   /** Replied 表示已经有自己发的回复（GitHub 上已存在，或草稿已发送）。 */
   replied: boolean;

@@ -56,12 +56,17 @@ func Default() Config {
 }
 
 // Dir 返回配置目录（不存在则创建）。
+// GH_AGENT_HOME 可以覆盖它，用来同时跑打包版和开发版：
+// 两边各用各的 config / state / drafts，不会互相踩。
 func Dir() (string, error) {
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
+	dir := strings.TrimSpace(os.Getenv("GH_AGENT_HOME"))
+	if dir == "" {
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(base, "gh-agent")
 	}
-	dir := filepath.Join(base, "gh-agent")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}

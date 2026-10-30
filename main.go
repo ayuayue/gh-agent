@@ -11,9 +11,13 @@ import (
 	_ "embed"
 	"image"
 	"image/png"
+	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/desk"
 	"github.com/egoist/mygo"
 )
@@ -30,6 +34,12 @@ func main() {
 	app := mygo.App
 	// 名字决定用户数据目录，要在任何存储之前设好。
 	app.SetName("GH Agent")
+
+	// 崩溃 / 退出原因落盘：开发时应用莫名退出，界面上什么都看不到。
+	logFile := setupCrashLog()
+	defer logFile.Close()
+	log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	svc, err := desk.New("")
 	if err != nil {
@@ -84,6 +94,22 @@ func main() {
 	}
 }
 
+// setupCrashLog 把标准日志写到配置目录下的 app.log（换文件时轮转一份旧的）。
+func setupCrashLog() *os.File {
+	dir, err := config.Dir()
+	if err != nil {
+		return os.Stdout
+	}
+	path := filepath.Join(dir, "app.log")
+	_ = os.Rename(path, path+".old") // 不存在也没关系
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return os.Stdout
+	}
+	log.Printf("---- 应用启动 ----")
+	return f
+}
+
 func showWindow() {
 	winMu.Lock()
 	defer winMu.Unlock()
@@ -99,8 +125,8 @@ func showWindow() {
 		MinWidth:        760,
 		MinHeight:       520,
 		BackgroundColor: "light-dark(#f5f6f8, #0b0d11)", // 页面 --bg
-		StateKey:        "main",                          // 记住上次的位置和大小
-		URL:             "/",                             // dev 走 devUrl，打包后走 frontendDist
+		StateKey:        "main",                         // 记住上次的位置和大小
+		URL:             "/",                            // dev 走 devUrl，打包后走 frontendDist
 	})
 }
 

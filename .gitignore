@@ -5,6 +5,7 @@
 /dist/
 /build/
 /.mygo/
+/.dev/
 mygo_windows_*.syso
 node_modules/
 

@@ -399,10 +399,10 @@ export default function Settings({
               placeholder="留空 = 全部处理"
               spellCheck={false}
             />
-            <span className={form.trigger.trim() === "" ? "hint warn" : "hint"}>
+            <span className="hint">
               {form.trigger.trim() === ""
-                ? "留空：任何 issue / PR 评论都会处理"
-                : "评论里出现这个词才处理"}
+                ? "留空：逐条审查所有「还没有评论」的条目（有评论的跳过，审过的不重复）"
+                : "评论里出现这个词才处理；自己发的评论始终跳过"}
             </span>
           </label>
 

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ayuayue/gh-agent/internal/config"
@@ -28,6 +29,9 @@ type Runner struct {
 	// OnTask 在开始出稿时收到这条任务，结束时收到 nil。
 	// 界面靠它显示「正在处理谁」，ACP 跑一分钟也不至于看起来像卡死。
 	OnTask func(*Task)
+	// OnItem 是触发词留空时的审查回调：桌面壳拿它跑完整审查并出稿。
+	// 为空（比如 CLI）时跳过这个模式。
+	OnItem func(repo string, issue ghapi.Issue) error
 }
 
 // Task 是正在出稿的那一条评论。
@@ -78,16 +82,24 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 			break
 		}
 		repoState := r.State.For(repo)
+		// 触发词留空 = 逐条审查模式：所有还没有评论的条目都审一遍，
+		// 有评论的说明人已经表过态，跳过。
+		if strings.TrimSpace(r.Config.Trigger) == "" {
+			handled += r.runItems(ctx, repo, repoState)
+			continue
+		}
 		since := repoState.Since(r.Config.Overlap(), time.Now())
 		issues, err := r.GH.ListIssuesUpdatedSince(ctx, repo, since)
 		if err != nil {
 			return handled, fmt.Errorf("%s 列条目失败: %w", repo, err)
 		}
 		if len(issues) == 0 {
+			r.logf("%s：没有新动态（since %s）", repo, since.Format("01-02 15:04:05"))
 			repoState.Advance(time.Now())
 			continue
 		}
 		r.logf("%s：since=%s 有 %d 条更新", repo, since.Format(time.RFC3339), len(issues))
+		before := handled
 		for _, issue := range issues {
 			if handled >= r.Config.MaxPerPoll {
 				break
@@ -117,12 +129,50 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 				handled++
 			}
 		}
+		if handled == before {
+			r.logf("%s：%d 条有更新，但没有命中触发规则的评论", repo, len(issues))
+		}
 		repoState.Advance(time.Now())
 	}
 	if err := r.State.Save(r.StatePath); err != nil {
 		return handled, err
 	}
 	return handled, nil
+}
+
+// runItems 扫一遍 open 条目，把「还没有任何评论」的交给 OnItem 审查。
+// 每轮最多 MaxPerPoll 条；审过的记在 state 里，不会重复审。
+func (r *Runner) runItems(ctx context.Context, repo string, repoState *state.Repo) int {
+	if r.OnItem == nil {
+		r.logf("%s：触发词为空，但当前入口没有审查回调，跳过", repo)
+		return 0
+	}
+	issues, err := r.GH.ListOpenIssues(ctx, repo)
+	if err != nil {
+		r.logf("%s：列条目失败：%v", repo, err)
+		return 0
+	}
+	handled := 0
+	for _, issue := range issues {
+		if handled >= r.Config.MaxPerPoll {
+			break
+		}
+		if issue.Comments > 0 || repoState.IsIgnoredIssue(issue.Number) || repoState.HasIssue(issue.Number) {
+			continue
+		}
+		r.logf("%s#%d 没有评论，交给 %s 审查", repo, issue.Number, r.Responder.Label())
+		if err := r.OnItem(repo, issue); err != nil {
+			r.logf("  ✗ #%d 审查失败：%v", issue.Number, err)
+			continue
+		}
+		repoState.MarkIssue(issue.Number)
+		handled++
+	}
+	if handled == 0 {
+		r.logf("%s：没有待审查的条目（共 %d 条 open）", repo, len(issues))
+	}
+	repoState.Advance(time.Now())
+	return handled
 }
 
 func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, comment ghapi.Comment, thread []ghapi.Comment, repoState *state.Repo) error {

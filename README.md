@@ -174,13 +174,21 @@ Token 解析顺序：`GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token`（复用�
 
 ## 触发规则
 
-一条评论同时满足才会被处理：
+`trigger` 有值时走「评论」模式，一条评论同时满足才会被处理：
 
 1. 作者不是自己（按 login）、不是 bot；
 2. `author_association` 在允许列表（默认 OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR）；
-3. 正文命中 `trigger`（默认 `@claude`，大小写不敏感）；**留空则任何评论都处理**——所有
-   issue / PR 的新评论、只要作者在上面那张白名单里，都会触发；
+3. 正文命中 `trigger`（大小写不敏感）；
 4. 这条 comment id 没处理过（state 里记最近 1000 条）。
+
+`trigger` **留空**时走「逐条审查」模式，不再看评论：
+
+- 扫所有 open 的 issue / PR，**只处理还没有任何评论的**；
+- 有评论的跳过——说明人已经表过态（通常修完才评论，或决定不改）；
+- 审过的条目记在 `state.json` 的 `seen_issues` 里，不会重复审；
+- 每轮最多 `max_per_poll` 条。
+
+审查模式和条目页的「审查」按钮走同一套流程：能改代码就改、自动提交、进待审等你批准。
 
 ## 目录
 

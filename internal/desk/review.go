@@ -9,6 +9,7 @@ import (
 
 	"github.com/ayuayue/gh-agent/internal/agent"
 	"github.com/ayuayue/gh-agent/internal/bootstrap"
+	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
 )
 
@@ -51,20 +52,45 @@ func (s *Service) ReviewItem(repo string, number int) (Draft, error) {
 		s.logf("  ! %s#%d 取评论失败，只按条目正文审查：%v", repo, number, err)
 	}
 
+	return s.reviewIssue(ctx, cfg, me, repo, issue, comments, cancel)
+}
+
+// onItem 是轮询在「触发词留空」模式下的回调：条目列表已经拉好了，
+// 直接走同一套审查流程，不动评论。
+func (s *Service) onItem(repo string, issue ghapi.Issue) error {
+	s.mu.Lock()
+	cfg := s.cfg
+	me := s.me
+	s.mu.Unlock()
+
+	key := taskKey(repo, issue.Number)
+	if !s.locks.TryLock(key) {
+		return errors.New("这个条目正在处理中")
+	}
+	defer s.locks.Unlock(key)
+
+	ctx, cancel := context.WithTimeout(context.Background(), reviewTimeout)
+	defer cancel()
+	_, err := s.reviewIssue(ctx, cfg, me, repo, issue, nil, cancel)
+	return err
+}
+
+// reviewIssue 是审查的共用实现；调用方负责持有这个条目的锁。
+func (s *Service) reviewIssue(ctx context.Context, cfg config.Config, me, repo string, issue ghapi.Issue, comments []ghapi.Comment, cancel context.CancelFunc) (Draft, error) {
 	responder, err := bootstrap.ResponderFor(cfg, "", s.logf)
 	if err != nil {
 		return Draft{}, err
 	}
 	label := responder.Label()
-	s.logf("手动审查 %s#%d，交给 %s", repo, number, label)
-	s.startTask(key, &TaskDTO{
+	s.logf("审查 %s#%d，交给 %s", repo, issue.Number, label)
+	s.startTask(taskKey(repo, issue.Number), &TaskDTO{
 		Repo:       repo,
-		Number:     number,
+		Number:     issue.Number,
 		CommentURL: issue.HTMLURL,
 		Agent:      label,
 		StartedAt:  time.Now().Format(time.RFC3339),
 	}, cancel)
-	defer s.finishTask(key)
+	defer s.finishTask(taskKey(repo, issue.Number))
 
 	system := bootstrap.ReviewInstructions(cfg)
 	prompt := agent.BuildReviewPrompt(agent.PromptInput{
@@ -77,7 +103,7 @@ func (s *Service) ReviewItem(repo string, number int) (Draft, error) {
 	out, err := responder.Respond(ctx, agent.Request{Repo: repo, System: system, User: prompt})
 	if err != nil {
 		if ctx.Err() != nil {
-			s.logf("审查已停止：%s#%d", repo, number)
+			s.logf("审查已停止：%s#%d", repo, issue.Number)
 			return Draft{}, errors.New("已停止")
 		}
 		return Draft{}, err
@@ -90,9 +116,9 @@ func (s *Service) ReviewItem(repo string, number int) (Draft, error) {
 	}
 
 	draft := Draft{
-		ID:         fmt.Sprintf("review-%s-%d-%d", strings.ReplaceAll(repo, "/", "_"), number, time.Now().UnixNano()),
+		ID:         fmt.Sprintf("review-%s-%d-%d", strings.ReplaceAll(repo, "/", "_"), issue.Number, time.Now().UnixNano()),
 		Repo:       repo,
-		Number:     number,
+		Number:     issue.Number,
 		Title:      issue.Title,
 		IssueURL:   issue.HTMLURL,
 		CommentURL: issue.HTMLURL,
@@ -123,7 +149,7 @@ func (s *Service) ReviewItem(repo string, number int) (Draft, error) {
 		return Draft{}, err
 	}
 	EventDraft.Broadcast(draft)
-	s.logf("审查完成，已进待审：%s#%d", repo, number)
+	s.logf("审查完成，已进待审：%s#%d", repo, issue.Number)
 	EventStatus.Broadcast(s.Status())
 	s.refreshItemsIfWanted()
 	return draft, nil

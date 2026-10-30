@@ -242,3 +242,70 @@ func TestRunnerSkipsIgnored(t *testing.T) {
 		t.Error("取消条目忽略后应该正常拉评论")
 	}
 }
+
+// TestRunnerReviewsItemsWithoutComments 验证触发词留空时的「逐条审查」模式：
+// 只审没有评论的条目，审过的不再重复。
+func TestRunnerReviewsItemsWithoutComments(t *testing.T) {
+	var requested []string
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = append(requested, r.URL.Path)
+		if strings.HasPrefix(r.URL.Path, "/repos/o/r/issues") {
+			now := time.Now().UTC().Format(time.RFC3339)
+			writeJSON(t, w, []map[string]any{
+				{"number": 1, "title": "没人评论", "body": "描述", "state": "open", "comments": 0,
+					"user": map[string]string{"login": "friend"}, "created_at": now, "updated_at": now},
+				{"number": 2, "title": "已经聊过", "body": "描述", "state": "open", "comments": 2,
+					"user": map[string]string{"login": "friend"}, "created_at": now, "updated_at": now},
+			})
+			return
+		}
+		t.Errorf("意外的请求: %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ghSrv.Close()
+
+	cfg := config.Default()
+	cfg.Repos = []string{"o/r"}
+	cfg.MaxPerPoll = 5
+	cfg.Trigger = ""
+
+	gh := ghapi.New("token")
+	gh.SetBaseURL(ghSrv.URL)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	st := state.Load(statePath)
+	var reviewed []int
+	runner := &agent.Runner{
+		Config: cfg, Instructions: "x", Me: "me", GH: gh,
+		Responder: &stubResponder{},
+		State:     st, StatePath: statePath,
+		Logf: func(string, ...any) {},
+		OnItem: func(_ string, issue ghapi.Issue) error {
+			reviewed = append(reviewed, issue.Number)
+			return nil
+		},
+	}
+
+	handled, err := runner.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if handled != 1 || len(reviewed) != 1 || reviewed[0] != 1 {
+		t.Fatalf("只应审查没有评论的 #1，得到 handled=%d reviewed=%v", handled, reviewed)
+	}
+	if !st.For("o/r").HasIssue(1) {
+		t.Error("审过的条目应记进 state")
+	}
+	if st.For("o/r").HasIssue(2) {
+		t.Error("有评论的条目不该被标记")
+	}
+
+	// 第二轮：已经审过，不再重复。
+	if handled, err := runner.RunOnce(context.Background()); err != nil || handled != 0 || len(reviewed) != 1 {
+		t.Fatalf("第二轮不该重复审查，handled=%d reviewed=%v err=%v", handled, reviewed, err)
+	}
+	for _, path := range requested {
+		if strings.Contains(path, "/comments") {
+			t.Errorf("逐条审查模式不该去拉评论：%s", path)
+		}
+	}
+}

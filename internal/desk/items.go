@@ -177,7 +177,13 @@ func (s *Service) loadItems(cfg config.Config) {
 		}
 	}
 	s.applyDrafts(items)
-	sort.SliceStable(items, func(i, j int) bool { return items[i].UpdatedAt > items[j].UpdatedAt })
+	// 按创建时间排（新的在前）：更新时间的顺序会随评论跳来跳去，看起来乱。
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].CreatedAt != items[j].CreatedAt {
+			return items[i].CreatedAt > items[j].CreatedAt
+		}
+		return items[i].UpdatedAt > items[j].UpdatedAt
+	})
 	s.finishItems(items, firstErr)
 }
 
@@ -193,6 +199,7 @@ func (s *Service) newItem(repo string, issue ghapi.Issue) Item {
 		Labels:    []string{},
 		Author:    issue.User.Login,
 		Comments:  issue.Comments,
+		CreatedAt: issue.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt: issue.UpdatedAt.UTC().Format(time.RFC3339),
 		Replies:   []ItemReply{},
 	}

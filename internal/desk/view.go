@@ -105,6 +105,7 @@ type Item struct {
 	Labels    []string `json:"labels"`
 	Author    string   `json:"author"`
 	Comments  int      `json:"comments"`
+	CreatedAt string   `json:"createdAt"`
 	UpdatedAt string   `json:"updatedAt"`
 	// Replied 表示已经有自己发的回复（GitHub 上已存在，或草稿已发送）。
 	Replied   bool   `json:"replied"`
