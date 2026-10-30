@@ -22,6 +22,9 @@ type Runner struct {
 	State        *state.State
 	StatePath    string
 	Logf         func(format string, args ...any)
+	// OnDraft 非空时，出稿不再直接发帖，而是交给它处置（进待审队列）。
+	// 它优先于 Live：人工审核模式下 Live 应保持 false。
+	OnDraft func(repo string, issue ghapi.Issue, comment ghapi.Comment, body string) error
 }
 
 func (r *Runner) logf(format string, args ...any) {
@@ -92,6 +95,14 @@ func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, com
 	}
 	body := Finalize(reply, r.Config.Signature)
 	if body == "" {
+		repoState.Mark(comment.ID)
+		return nil
+	}
+	if r.OnDraft != nil {
+		if err := r.OnDraft(repo, issue, comment, body); err != nil {
+			return err
+		}
+		r.logf("  ⤷ 已进待审：%s", comment.HTMLURL)
 		repoState.Mark(comment.ID)
 		return nil
 	}

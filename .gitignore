@@ -1,11 +1,17 @@
 # 构建产物
 /gh-agent
 /gh-agent.exe
+/bin/
 /dist/
+/build/
+/.mygo/
+mygo_windows_*.syso
+node_modules/
 
 # 本地配置与状态（可能含 token、游标、已处理 id）
 config.json
 state.json
+drafts.json
 *.local.json
 
 # 编辑器

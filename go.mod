@@ -1,3 +1,12 @@
 module github.com/ayuayue/gh-agent
 
-go 1.26.0
+go 1.27.3
+
+require (
+	github.com/ebitengine/purego v0.11.1 // indirect
+	github.com/egoist/mygo v0.7.4-0.20261030064541-2b66322aa335 // indirect
+	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
+)
+
+tool github.com/egoist/mygo/cmd/mygo
