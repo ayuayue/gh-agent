@@ -14,5 +14,8 @@
     "timeout_seconds": 180,
     "max_output_tokens": 1200
   },
-  "signature": "*本条由本地 AI 助手自动生成，结论请以代码为准。*"
+  "signature": "*由 agent 协助生成*",
+  "agent": "llm",
+  "agent_permission": "bypass",
+  "repo_paths": {}
 }
