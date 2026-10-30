@@ -1,0 +1,14 @@
+# 构建产物
+/gh-agent
+/gh-agent.exe
+/dist/
+
+# 本地配置与状态（可能含 token、游标、已处理 id）
+config.json
+state.json
+*.local.json
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store
