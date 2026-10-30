@@ -1,6 +1,7 @@
 package desk
 
 import (
+	"github.com/ayuayue/gh-agent/internal/acp"
 	"github.com/ayuayue/gh-agent/internal/worktree"
 	"github.com/egoist/mygo"
 )
@@ -15,18 +16,21 @@ type ConfigDTO struct {
 	DryRun              bool     `json:"dryRun"`
 	AllowedAssociations []string `json:"allowedAssociations"`
 	Signature           string   `json:"signature"`
-	BaseURL             string   `json:"baseUrl"`
-	Model               string   `json:"model"`
-	APIKeyEnv           string   `json:"apiKeyEnv"`
-	TimeoutSeconds      int      `json:"timeoutSeconds"`
-	MaxOutputTokens     int      `json:"maxOutputTokens"`
-	Temperature         float64  `json:"temperature"`
-	// Agent 是默认出稿方：llm / codebuddy / pi。
+	// Agent 是默认出稿方：codebuddy / codex / claude / pi。
 	Agent string `json:"agent"`
 	// AgentPermission 是本地 agent 的工具权限：bypass / write / read / deny。
 	AgentPermission string `json:"agentPermission"`
 	// RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。
 	RepoPaths map[string]string `json:"repoPaths"`
+}
+
+// TaskDTO 是正在出稿的那一条，界面用它显示「处理中」。
+type TaskDTO struct {
+	Repo       string `json:"repo"`
+	Number     int    `json:"number"`
+	CommentURL string `json:"commentUrl"`
+	Agent      string `json:"agent"`
+	StartedAt  string `json:"startedAt"`
 }
 
 // StatusDTO 是轮询的当前状态。
@@ -38,9 +42,11 @@ type StatusDTO struct {
 	Handled    int    `json:"handled"`
 	Pending    int    `json:"pending"`
 	ConfigPath string `json:"configPath"`
+	// Tasks 是正在出稿的那些条目：界面显示「正在处理 #N（agent）已 42s」。
+	Tasks []TaskDTO `json:"tasks"`
 }
 
-// Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed。
+// Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed / ignored。
 type Draft struct {
 	ID         string `json:"id"`
 	Repo       string `json:"repo"`
@@ -50,18 +56,79 @@ type Draft struct {
 	CommentURL string `json:"commentUrl"`
 	Author     string `json:"author"`
 	Body       string `json:"body"`
+	// Kind 是条目类型：issue / pr；Type 是 issue 的类别：bug / feature。
+	Kind string `json:"kind"`
+	Type string `json:"type,omitempty"`
+	// Note 是「忽略」时写的备注。
+	Note string `json:"note,omitempty"`
 	// Agent 是产出这条草稿的 agent 名字。
 	Agent string `json:"agent"`
 	// Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。
 	Prompt string `json:"prompt,omitempty"`
 	// Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。
 	Changes *worktree.Result `json:"changes,omitempty"`
-	// Branch / Commit 是批准时改动落到的分支和提交，没有改动时为空。
+	// Branch / Commit 是改动落到的分支和提交。审查会在出稿后自动提交，
+	// 轮询出来的草稿仍然等批准时再提交。
 	Branch string `json:"branch,omitempty"`
 	Commit string `json:"commit,omitempty"`
+	// Merge 表示 PR 审查结论是「可以合并」，批准时会先合并再回帖。
+	Merge     bool   `json:"merge,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`
+}
+
+// ItemReply 是条目下已经存在的一条回复（评论），给条目列表展开时看。
+type ItemReply struct {
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	URL       string `json:"url"`
+	CreatedAt string `json:"createdAt"`
+	// Mine 表示这条是自己（gh-agent 账号）发的。
+	Mine bool `json:"mine"`
+	// Commit 是正文里提到的提交 sha，没有则为空。
+	Commit string `json:"commit,omitempty"`
+}
+
+// Item 是轮询覆盖到的一个 issue / PR，条目列表按它渲染。
+type Item struct {
+	ID     string `json:"id"`
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	URL    string `json:"url"`
+	// Kind 是 issue / pr。
+	Kind string `json:"kind"`
+	// Type 是 issue 的类别：bug / feature，识别不出来时为空。
+	Type string `json:"type,omitempty"`
+	// Labels 是原始标签名，界面上原样展示。
+	Labels    []string `json:"labels"`
+	Author    string   `json:"author"`
+	Comments  int      `json:"comments"`
+	UpdatedAt string   `json:"updatedAt"`
+	// Replied 表示已经有自己发的回复（GitHub 上已存在，或草稿已发送）。
+	Replied   bool   `json:"replied"`
+	RepliedAt string `json:"repliedAt,omitempty"`
+	// Replies 是已经加载出来的回复，最多保留最近几条。
+	Replies []ItemReply `json:"replies"`
+	// Committed 表示这个条目已经有提交：草稿提交过，或回复里带了 commit 链接。
+	Committed bool   `json:"committed"`
+	Commit    string `json:"commit,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+	// Ignored 是条目级忽略；IgnoreNote 是当时写的备注。
+	Ignored    bool   `json:"ignored"`
+	IgnoreNote string `json:"ignoreNote,omitempty"`
+	// DraftID / DraftStatus 是最近一条相关草稿，方便从列表跳回待审。
+	DraftID     string `json:"draftId,omitempty"`
+	DraftStatus string `json:"draftStatus,omitempty"`
+}
+
+// ItemsSnapshot 是条目列表的一次快照：加载中也会推一版，界面好显示进度。
+type ItemsSnapshot struct {
+	Items     []Item `json:"items"`
+	Loading   bool   `json:"loading"`
+	Error     string `json:"error,omitempty"`
+	FetchedAt string `json:"fetchedAt,omitempty"`
 }
 
 // PathCheck 是本地目录的检查结果。
@@ -85,6 +152,14 @@ type AgentInfo struct {
 	Current bool `json:"current"`
 }
 
+// AgentProbe 是一次 ACP 探测的结果：默认模型、可用模型、能力。
+type AgentProbe struct {
+	ID     string      `json:"id"`
+	OK     bool        `json:"ok"`
+	Detail string      `json:"detail,omitempty"`
+	Info   acp.Details `json:"info"`
+}
+
 // LogLine 是一行运行日志。
 type LogLine struct {
 	At    string `json:"at"`
@@ -97,4 +172,5 @@ var (
 	EventLog    = mygo.NewEvent[LogLine]("log")
 	EventDraft  = mygo.NewEvent[Draft]("draft")
 	EventStatus = mygo.NewEvent[StatusDTO]("status")
+	EventItems  = mygo.NewEvent[ItemsSnapshot]("items")
 )

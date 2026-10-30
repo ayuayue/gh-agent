@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckIcon, XIcon } from "../icons";
-import { Service, type AgentInfo, type ConfigDTO, type PathCheck } from "../mygo";
+import {
+  Service,
+  type AgentInfo,
+  type AgentProbe,
+  type ConfigDTO,
+  type PathCheck,
+} from "../mygo";
 
 const PERMISSIONS = [
   { id: "bypass", name: "全部放行", desc: "读文件、改代码、跑命令、联网都直接允许" },
@@ -24,6 +30,8 @@ export default function Settings({
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [probes, setProbes] = useState<Record<string, AgentProbe>>({});
+  const [probing, setProbing] = useState("");
 
   useEffect(() => {
     Service.agents()
@@ -31,19 +39,36 @@ export default function Settings({
       .catch(() => setAgents([]));
   }, []);
 
+  const probeAgent = async (id: string, refresh = false) => {
+    if (!id || probing) return;
+    setProbing(id);
+    try {
+      const result = await Service.probeAgent(id, refresh);
+      setProbes((prev) => ({ ...prev, [id]: result }));
+    } catch (err) {
+      setProbes((prev) => ({
+        ...prev,
+        [id]: { id, ok: false, info: {}, detail: err instanceof Error ? err.message : String(err) },
+      }));
+    } finally {
+      setProbing("");
+    }
+  };
+
+  // 选中的 agent 自动读一次参数，省得每次手动点；服务端有缓存。
+  useEffect(() => {
+    if (form.agent && !probes[form.agent]) void probeAgent(form.agent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.agent]);
+
   const set = <K extends keyof ConfigDTO>(key: K, value: ConfigDTO[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  const mappings = useMemo(
-    () => Object.entries(form.repoPaths).sort(([a], [b]) => a.localeCompare(b)),
-    [form.repoPaths],
-  );
-
   // 目录一变就重新检查：是不是存在、是不是 git 仓库。
-  const pathKey = mappings.map(([, p]) => p).join("|");
+  const pathKey = Object.values(form.repoPaths).join("|");
   useEffect(() => {
     let alive = true;
-    const paths = [...new Set(mappings.map(([, p]) => p).filter(Boolean))];
+    const paths = [...new Set(Object.values(form.repoPaths).filter(Boolean))];
     Promise.all(paths.map((p) => Service.checkPath(p).then((r) => [p, r] as const)))
       .then((pairs) => {
         if (!alive) return;
@@ -56,21 +81,51 @@ export default function Settings({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathKey]);
 
-  const setPath = (repo: string, path: string) =>
-    setForm((f) => ({ ...f, repoPaths: { ...f.repoPaths, [repo]: path } }));
-
-  const removePath = (repo: string) =>
+  // 改名时把本地目录映射一起挪过去，不然路径会留在旧名字下面。
+  const renameRepo = (index: number, next: string) =>
     setForm((f) => {
-      const next = { ...f.repoPaths };
-      delete next[repo];
-      return { ...f, repoPaths: next };
+      const prev = f.repos[index];
+      if (prev === undefined) return f;
+      const repos = f.repos.map((r, i) => (i === index ? next : r));
+      const paths = { ...f.repoPaths };
+      if (prev !== next && paths[prev] !== undefined) {
+        paths[next] = paths[prev];
+        delete paths[prev];
+      }
+      return { ...f, repos, repoPaths: paths };
     });
 
-  const addMapping = () => {
+  const setRepoPath = (repo: string, path: string) =>
+    setForm((f) => {
+      const paths = { ...f.repoPaths };
+      if (path.trim()) paths[repo] = path;
+      else delete paths[repo];
+      return { ...f, repoPaths: paths };
+    });
+
+  const removeRepo = (index: number) =>
+    setForm((f) => {
+      const repo = f.repos[index];
+      if (repo === undefined) return f;
+      const paths = { ...f.repoPaths };
+      delete paths[repo];
+      return { ...f, repos: f.repos.filter((_, i) => i !== index), repoPaths: paths };
+    });
+
+  const addRepo = () => {
     const repo = newRepo.trim();
+    if (!repo) return;
+    if (form.repos.some((r) => r.toLowerCase() === repo.toLowerCase())) {
+      setNewRepo("");
+      setNewPath("");
+      return;
+    }
     const path = newPath.trim();
-    if (!repo || !path) return;
-    setPath(repo, path);
+    setForm((f) => {
+      const paths = { ...f.repoPaths };
+      if (path) paths[repo] = path;
+      return { ...f, repos: [...f.repos, repo], repoPaths: paths };
+    });
     setNewRepo("");
     setNewPath("");
   };
@@ -82,7 +137,22 @@ export default function Settings({
     setError("");
     setMsg("");
     try {
-      const saved = await Service.saveConfig(form);
+      // 列表里可能留着空行、重复项：保存前收一遍，别让它们把校验顶回来。
+      const seen = new Set<string>();
+      const repos = form.repos.map((r) => r.trim()).filter((r) => {
+        if (!r) return false;
+        const key = r.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      // 只保留还在列表里的仓库的目录，空路径不落盘。
+      const repoPaths: Record<string, string> = {};
+      for (const repo of repos) {
+        const path = (form.repoPaths[repo] ?? "").trim();
+        if (path) repoPaths[repo] = path;
+      }
+      const saved = await Service.saveConfig({ ...form, repos, repoPaths });
       setForm(saved);
       onSaved(saved);
       setMsg("已保存");
@@ -128,16 +198,69 @@ export default function Settings({
                 <span className="agent-body">
                   <span className="agent-name">
                     {a.name}
+                    {a.available && (
+                      <button
+                        type="button"
+                        className="link agent-probe"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void probeAgent(a.id, true);
+                        }}
+                        disabled={probing === a.id}
+                      >
+                        {probing === a.id ? "读取中…" : "读取参数"}
+                      </button>
+                    )}
                     {form.agent === a.id && <CheckIcon size={13} />}
                   </span>
                   <span className="agent-desc">{a.desc}</span>
                   {a.detail && <span className="agent-detail">{a.detail}</span>}
+                  {(() => {
+                    const probe = probes[a.id];
+                    if (!probe) return null;
+                    if (!probe.ok) {
+                      return <span className="agent-detail">读取失败：{probe.detail}</span>;
+                    }
+                    const models = probe.info.models ?? [];
+                    const caps = probe.info.capabilities ?? [];
+                    const modes = probe.info.modes ?? [];
+                    return (
+                      <>
+                        {probe.info.currentModel && (
+                          <span className="agent-params">
+                            默认模型 <code>{probe.info.currentModel}</code>
+                          </span>
+                        )}
+                        {models.length > 0 && (
+                          <span className="agent-params" title={models.join("\n")}>
+                            可用模型 {models.length} 个：{models.slice(0, 5).join(" / ")}
+                            {models.length > 5 ? " …" : ""}
+                          </span>
+                        )}
+                        {modes.length > 0 && (
+                          <span className="agent-params">
+                            模式 {modes.slice(0, 5).join(" / ")}
+                            {modes.length > 5 ? " …" : ""}
+                          </span>
+                        )}
+                        {caps.length > 0 && (
+                          <span className="agent-params">能力 {caps.join("、")}</span>
+                        )}
+                        {!probe.info.currentModel && models.length === 0 && caps.length === 0 && (
+                          <span className="agent-params">没报模型和能力</span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </span>
               </label>
             ))}
           </div>
           <span className="hint" style={{ gridColumn: "1 / -1" }}>
-            本地 agent 能读仓库、跑命令，出稿更准但慢得多；模型端点只看到 prompt 里的上下文。
+            {form.agent === ""
+              ? "还没选出稿方：选一个才能开始轮询和审查。"
+              : "四个 agent 都跑在本机进程里，能读代码、跑命令；「读取参数」会真起一次进程，读出默认模型和能力。"}
           </span>
         </div>
       </section>
@@ -178,21 +301,28 @@ export default function Settings({
       </section>
 
       <section className="field-group">
-        <header>仓库 → 本地目录</header>
+        <header>仓库</header>
         <div className="body">
           <div className="map-list">
-            {mappings.length === 0 && (
-              <p className="map-empty">还没有映射。本地 agent 要有本地克隆才能读代码。</p>
+            {form.repos.length === 0 && (
+              <p className="map-empty">还没有仓库。加一个 owner/name 就会开始监控。</p>
             )}
-            {mappings.map(([repo, path]) => {
-              const check = checks[path];
+            {form.repos.map((repo, i) => {
+              const path = form.repoPaths[repo] ?? "";
+              const check = path ? checks[path] : undefined;
               return (
-                <div className="map-row" key={repo}>
-                  <code className="map-repo">{repo}</code>
+                <div className="map-row" key={i}>
+                  <input
+                    className="repo-name"
+                    value={repo}
+                    onChange={(e) => renameRepo(i, e.target.value)}
+                    placeholder="owner/name"
+                    spellCheck={false}
+                  />
                   <input
                     value={path}
-                    onChange={(e) => setPath(repo, e.target.value)}
-                    placeholder="D:/project/xxx"
+                    onChange={(e) => setRepoPath(repo, e.target.value)}
+                    placeholder="本地目录（可选，agent 读代码用）"
                     spellCheck={false}
                   />
                   <span
@@ -206,8 +336,8 @@ export default function Settings({
                   <button
                     type="button"
                     className="ghost icon-only"
-                    onClick={() => removePath(repo)}
-                    title="移除映射"
+                    onClick={() => removeRepo(i)}
+                    title="移除仓库"
                   >
                     <XIcon size={14} />
                   </button>
@@ -220,22 +350,29 @@ export default function Settings({
             <input
               value={newRepo}
               onChange={(e) => setNewRepo(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addRepo();
+                }
+              }}
               placeholder="owner/name"
               spellCheck={false}
             />
             <input
               value={newPath}
               onChange={(e) => setNewPath(e.target.value)}
-              placeholder="D:/project/xxx"
+              placeholder="本地目录（可选）"
               spellCheck={false}
             />
-            <button type="button" onClick={addMapping} disabled={!newRepo.trim() || !newPath.trim()}>
+            <button type="button" onClick={addRepo} disabled={!newRepo.trim()}>
               添加
             </button>
           </div>
 
           <span className="hint" style={{ gridColumn: "1 / -1" }}>
-            可以映射任意多个仓库。没映射的仓库会用配置目录下的空目录，agent 只能靠上下文作答。
+            列表里的仓库都会被监控；填了本地目录的，本地 agent 才能读代码、改代码。目录不存在或不是 git
+            仓库会在右边标出来。
           </span>
         </div>
       </section>
@@ -243,25 +380,6 @@ export default function Settings({
       <section className="field-group">
         <header>轮询</header>
         <div className="body">
-          <label className="field" style={{ gridColumn: "1 / -1" }}>
-            <span>监控的仓库</span>
-            <input
-              value={form.repos.join(", ")}
-              onChange={(e) =>
-                set(
-                  "repos",
-                  e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean),
-                )
-              }
-              placeholder="owner/name, owner/name"
-              spellCheck={false}
-            />
-            <span className="hint">多个仓库用逗号分隔，跟上面的映射独立</span>
-          </label>
-
           <label className="field">
             <span>轮询间隔</span>
             <input
@@ -295,74 +413,6 @@ export default function Settings({
               min={1}
               value={form.maxPerPoll}
               onChange={(e) => set("maxPerPoll", Number(e.target.value))}
-            />
-          </label>
-        </div>
-      </section>
-
-      <section className="field-group">
-        <header>模型端点（agent 选 llm 时才用）</header>
-        <div className="body">
-          <label className="field">
-            <span>端点</span>
-            <input
-              value={form.baseUrl}
-              onChange={(e) => set("baseUrl", e.target.value)}
-              spellCheck={false}
-            />
-            <span className="hint">OpenAI 兼容，带 /v1</span>
-          </label>
-
-          <label className="field">
-            <span>模型</span>
-            <input
-              value={form.model}
-              onChange={(e) => set("model", e.target.value)}
-              spellCheck={false}
-            />
-          </label>
-
-          <label className="field">
-            <span>API key 环境变量</span>
-            <input
-              value={form.apiKeyEnv}
-              onChange={(e) => set("apiKeyEnv", e.target.value)}
-              spellCheck={false}
-            />
-            <span className="hint">key 本身不落盘</span>
-          </label>
-
-          <label className="field">
-            <span>超时</span>
-            <input
-              type="number"
-              min={10}
-              value={form.timeoutSeconds}
-              onChange={(e) => set("timeoutSeconds", Number(e.target.value))}
-            />
-            <span className="hint">秒</span>
-          </label>
-
-          <label className="field">
-            <span>最大输出 token</span>
-            <input
-              type="number"
-              min={128}
-              value={form.maxOutputTokens}
-              onChange={(e) => set("maxOutputTokens", Number(e.target.value))}
-            />
-            <span className="hint">太小会把正文截断</span>
-          </label>
-
-          <label className="field">
-            <span>temperature</span>
-            <input
-              type="number"
-              step="0.1"
-              min={0}
-              max={2}
-              value={form.temperature}
-              onChange={(e) => set("temperature", Number(e.target.value))}
             />
           </label>
         </div>

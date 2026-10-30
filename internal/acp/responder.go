@@ -78,6 +78,11 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 		return agent.Reply{}, fmt.Errorf("%s 启动失败：%w", def.Name, err)
 	}
 	defer client.Close()
+	if r.Logf != nil {
+		if pid := client.PID(); pid > 0 {
+			r.Logf("%s 已启动（pid %d）", def.Name, pid)
+		}
+	}
 
 	out, err := client.Prompt(runCtx, system+"\n\n---\n\n"+req.User, nil)
 	if err != nil {

@@ -1,5 +1,13 @@
-import { useEffect, useState } from "react";
-import { CheckIcon, ChevronIcon, ExternalIcon, InboxIcon, RefreshIcon, XIcon } from "../icons";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CheckIcon,
+  ChevronIcon,
+  ExternalIcon,
+  EyeOffIcon,
+  InboxIcon,
+  RefreshIcon,
+  XIcon,
+} from "../icons";
 import Markdown from "../Markdown";
 import { Service, type AgentInfo, type Draft } from "../mygo";
 import Changes from "./Changes";
@@ -9,6 +17,7 @@ const STATUS_LABEL: Record<string, string> = {
   posted: "已发送",
   rejected: "已驳回",
   failed: "发送失败",
+  ignored: "已忽略",
 };
 
 const CLAMP_AT = 320;
@@ -20,7 +29,15 @@ function fmtTime(iso: string) {
   return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
 }
 
-export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChanged: () => void }) {
+export default function Drafts({
+  drafts,
+  processing,
+  onChanged,
+}: {
+  drafts: Draft[];
+  processing: boolean;
+  onChanged: () => void;
+}) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -28,6 +45,9 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
   const [editing, setEditing] = useState<string | null>(null);
   const [draftText, setDraftText] = useState("");
   const [redo, setRedo] = useState<Record<string, string>>({});
+  const [ignoring, setIgnoring] = useState<string | null>(null);
+  const [ignoreNote, setIgnoreNote] = useState("");
+  const [repoFilter, setRepoFilter] = useState("");
 
   useEffect(() => {
     Service.agents()
@@ -35,8 +55,10 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
       .catch(() => setAgents([]));
   }, []);
 
-  const pending = drafts.filter((d) => d.status === "pending");
-  const history = drafts.filter((d) => d.status !== "pending");
+  const repos = useMemo(() => [...new Set(drafts.map((d) => d.repo))].sort(), [drafts]);
+  const scoped = repoFilter ? drafts.filter((d) => d.repo === repoFilter) : drafts;
+  const pending = scoped.filter((d) => d.status === "pending");
+  const history = scoped.filter((d) => d.status !== "pending");
 
   const toggle = (id: string) =>
     setExpanded((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -76,6 +98,40 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
     }
   };
 
+  const startIgnore = (d: Draft) => {
+    setIgnoring(d.id);
+    setIgnoreNote("");
+    setError("");
+  };
+
+  const doIgnore = async (id: string) => {
+    setBusy(id + "|ignore");
+    setError("");
+    try {
+      await Service.ignore(id, ignoreNote);
+      setIgnoring(null);
+      setIgnoreNote("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const restore = async (id: string) => {
+    setBusy(id + "|restore");
+    setError("");
+    try {
+      await Service.unignore(id);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const redraft = async (d: Draft) => {
     const agentID = redo[d.id] ?? "";
     if (!agentID) return;
@@ -92,6 +148,15 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
   };
 
   if (pending.length === 0 && history.length === 0) {
+    if (processing) {
+      return (
+        <div className="empty">
+          <span className="spinner" aria-hidden="true" />
+          <strong>正在出稿…</strong>
+          <p>模型 / agent 跑完就会出现在这里，不用手动刷新。</p>
+        </div>
+      );
+    }
     return (
       <div className="empty">
         <InboxIcon size={34} />
@@ -108,11 +173,25 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
     <div className="drafts">
       {error && <div className="banner error">{error}</div>}
 
+      {repos.length > 1 && (
+        <div className="chips">
+          <button data-active={repoFilter === ""} onClick={() => setRepoFilter("")}>
+            全部仓库<em>{drafts.length}</em>
+          </button>
+          {repos.map((repo) => (
+            <button key={repo} data-active={repoFilter === repo} onClick={() => setRepoFilter(repo)}>
+              {repo}
+              <em>{drafts.filter((d) => d.repo === repo).length}</em>
+            </button>
+          ))}
+        </div>
+      )}
+
       {pending.length === 0 && (
         <div className="empty">
           <InboxIcon size={34} />
-          <strong>队列已清空</strong>
-          <p>新命中会实时出现在这里，不用手动刷新。</p>
+          <strong>{repoFilter ? repoFilter + " 没有待审" : "队列已清空"}</strong>
+          <p>{repoFilter ? "切回「全部仓库」看看别的仓库。" : "新命中会实时出现在这里，不用手动刷新。"}</p>
         </div>
       )}
 
@@ -133,6 +212,14 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
                 {d.repo}#{d.number}
               </button>
               <span className="draft-meta">
+                {d.kind && (
+                  <span className="tag kind" data-kind={d.kind}>
+                    {d.kind === "pr" ? "PR" : "Issue"}
+                  </span>
+                )}
+                {d.type === "bug" && <span className="tag type-bug">Bug</span>}
+                {d.type === "feature" && <span className="tag type-feature">Feature</span>}
+                {d.merge && <span className="tag merge">可合并 PR</span>}
                 <span className="author">{d.author}</span>
                 <span className="sep">·</span>
                 <time>{fmtTime(d.createdAt)}</time>
@@ -168,10 +255,16 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
             {!isEditing && d.changes && (
               <>
                 <Changes changes={d.changes} />
-                <p className="commit-hint">
-                  批准时会把这几处改动提交到分支{" "}
-                  <code>gh-agent/issue-{d.number}</code>（只提交到本地，不推送）
-                </p>
+                {d.commit ? (
+                  <p className="commit-hint">
+                    改动已自动提交到 <code>{d.branch}</code>（{d.commit.slice(0, 7)}），批准只发回复
+                  </p>
+                ) : (
+                  <p className="commit-hint">
+                    批准时会把这几处改动提交到分支{" "}
+                    <code>gh-agent/issue-{d.number}</code>（只提交到本地，不推送）
+                  </p>
+                )}
               </>
             )}
 
@@ -220,17 +313,43 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
                     {kind === "redraft" ? "重做中…" : "重做"}
                   </button>
                   <span className="spacer" />
+                  <button className="ghost" onClick={() => startIgnore(d)} disabled={working}>
+                    <EyeOffIcon size={14} />
+                    {kind === "ignore" ? "忽略中…" : "忽略"}
+                  </button>
                   <button className="danger" onClick={() => act(d.id, false)} disabled={working}>
                     <XIcon size={14} />
                     {kind === "reject" ? "驳回中…" : "驳回"}
                   </button>
                   <button className="primary" onClick={() => act(d.id, true)} disabled={working}>
                     <CheckIcon size={14} />
-                    {kind === "approve" ? "发送中…" : "批准并发送"}
+                    {kind === "approve"
+                      ? "处理中…"
+                      : d.merge
+                        ? "批准、合并并回复"
+                        : "批准并发送"}
                   </button>
                 </>
               )}
             </div>
+
+            {ignoring === d.id && (
+              <div className="ignore-row">
+                <input
+                  value={ignoreNote}
+                  onChange={(e) => setIgnoreNote(e.target.value)}
+                  placeholder="备注（可选）：为什么忽略这条，之后在条目里能看到"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <button className="ghost" onClick={() => setIgnoring(null)}>
+                  取消
+                </button>
+                <button className="primary" onClick={() => void doIgnore(d.id)} disabled={working}>
+                  确认忽略
+                </button>
+              </div>
+            )}
           </article>
         );
       })}
@@ -247,8 +366,18 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
                 </button>
                 <span className="grow" title={d.error || d.title}>
                   {d.error || d.title}
+                  {d.note && <em className="hrow-note"> · {d.note}</em>}
                 </span>
                 {d.branch && <span className="tag branch">{d.branch}</span>}
+                {d.status === "ignored" && (
+                  <button
+                    className="link"
+                    onClick={() => void restore(d.id)}
+                    disabled={busy === d.id + "|restore"}
+                  >
+                    恢复
+                  </button>
+                )}
                 <time>{fmtTime(d.createdAt)}</time>
               </div>
             ))}

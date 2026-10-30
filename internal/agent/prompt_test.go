@@ -80,3 +80,39 @@ func TestFinalizeDropsToolMarkup(t *testing.T) {
 		t.Errorf("应保留工具调用之前的正文，得到 %q", got)
 	}
 }
+
+func TestBuildReviewPrompt(t *testing.T) {
+	issue := ghapi.Issue{Number: 12, Title: "拖拽后不动", Body: "详细描述", HTMLURL: "https://github.com/o/r/issues/12"}
+	out := BuildReviewPrompt(PromptInput{
+		Repo:  "o/r",
+		Issue: issue,
+		Thread: []ghapi.Comment{
+			comment(1, "a", "OWNER", "我也遇到了"),
+		},
+		Me: "me",
+	})
+	for _, want := range []string{"o/r", "#12", "Issue", "详细描述", "我也遇到了", "审查这个条目", "工作区里改代码"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("审查 prompt 缺少 %q\n%s", want, out)
+		}
+	}
+	if !strings.HasSuffix(out, "只输出要发到这条 issue / PR 的回复正文。") {
+		t.Errorf("审查 prompt 结尾不对：%q", out)
+	}
+	if strings.Contains(out, "需要你回复的评论") {
+		t.Error("审查 prompt 不该限定某一条评论")
+	}
+}
+
+func TestSplitMergeVerdict(t *testing.T) {
+	body, merge := SplitMergeVerdict("看起来没问题。\n\n" + MergeMarker)
+	if !merge {
+		t.Error("应认出合并标记")
+	}
+	if strings.Contains(body, "gh-agent") || !strings.HasSuffix(body, "看起来没问题。") {
+		t.Errorf("标记应从正文里去掉，得到 %q", body)
+	}
+	if _, merge := SplitMergeVerdict("还有问题要改。"); merge {
+		t.Error("没有标记时不该认为可合并")
+	}
+}

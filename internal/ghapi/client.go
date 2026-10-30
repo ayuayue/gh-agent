@@ -23,6 +23,12 @@ type User struct {
 	Type  string `json:"type"`
 }
 
+// Label 是 issue/PR 上的一个标签。
+type Label struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
 // Issue 同时表示 issue 和 PR（PR 带 pull_request 字段）。
 type Issue struct {
 	Number      int       `json:"number"`
@@ -31,6 +37,8 @@ type Issue struct {
 	HTMLURL     string    `json:"html_url"`
 	State       string    `json:"state"`
 	User        User      `json:"user"`
+	Labels      []Label   `json:"labels"`
+	Comments    int       `json:"comments"`
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -139,6 +147,45 @@ func (c *Client) ListIssuesUpdatedSince(ctx context.Context, repo string, since 
 	return issues, nil
 }
 
+// GetIssue 取单个 issue / PR 的详情（正文、标签、评论数）。
+func (c *Client) GetIssue(ctx context.Context, repo string, number int) (Issue, error) {
+	var issue Issue
+	path := "/repos/" + repo + "/issues/" + strconv.Itoa(number)
+	if err := c.do(ctx, http.MethodGet, path, nil, &issue); err != nil {
+		return Issue{}, err
+	}
+	return issue, nil
+}
+
+// ListOpenIssues 列出仓库里全部 open 的 issue 与 PR（PR 在 issues API 里同样是 issue）。
+// 条目列表页用它做一次全量拉取，不走 since。
+func (c *Client) ListOpenIssues(ctx context.Context, repo string) ([]Issue, error) {
+	query := url.Values{}
+	query.Set("state", "open")
+	query.Set("sort", "updated")
+	query.Set("direction", "desc")
+	query.Set("per_page", "50")
+	var issues []Issue
+	path := "/repos/" + repo + "/issues?" + query.Encode()
+	if err := c.do(ctx, http.MethodGet, path, nil, &issues); err != nil {
+		return nil, err
+	}
+	return issues, nil
+}
+
+// ListIssueComments 列出某条 issue/PR 的全部对话评论（含 PR 的普通评论）。
+// 出稿时用它拿完整上下文，避免模型只看得到本轮窗口里的评论。
+func (c *Client) ListIssueComments(ctx context.Context, repo string, number int) ([]Comment, error) {
+	query := url.Values{}
+	query.Set("per_page", "100")
+	var comments []Comment
+	path := "/repos/" + repo + "/issues/" + strconv.Itoa(number) + "/comments?" + query.Encode()
+	if err := c.do(ctx, http.MethodGet, path, nil, &comments); err != nil {
+		return nil, err
+	}
+	return comments, nil
+}
+
 // ListIssueCommentsSince 列出某条 issue/PR 在 since 之后的对话评论（含 PR 的普通评论）。
 func (c *Client) ListIssueCommentsSince(ctx context.Context, repo string, number int, since time.Time) ([]Comment, error) {
 	query := url.Values{}
@@ -150,6 +197,15 @@ func (c *Client) ListIssueCommentsSince(ctx context.Context, repo string, number
 		return nil, err
 	}
 	return comments, nil
+}
+
+// MergePullRequest 合并一个 PR。method 取 merge / squash / rebase，空值按 merge。
+func (c *Client) MergePullRequest(ctx context.Context, repo string, number int, method string) error {
+	if method == "" {
+		method = "merge"
+	}
+	path := "/repos/" + repo + "/pulls/" + strconv.Itoa(number) + "/merge"
+	return c.do(ctx, http.MethodPut, path, map[string]string{"merge_method": method}, nil)
 }
 
 // PostIssueComment 发一条评论（issue 与 PR 共用同一个接口）。

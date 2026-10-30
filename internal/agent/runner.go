@@ -25,6 +25,23 @@ type Runner struct {
 	// OnDraft 非空时，出稿不再直接发帖，而是交给它处置（进待审队列）。
 	// 它优先于 Live：人工审核模式下 Live 应保持 false。
 	OnDraft OnDraftFunc
+	// OnTask 在开始出稿时收到这条任务，结束时收到 nil。
+	// 界面靠它显示「正在处理谁」，ACP 跑一分钟也不至于看起来像卡死。
+	OnTask func(*Task)
+}
+
+// Task 是正在出稿的那一条评论。
+type Task struct {
+	Repo       string
+	Number     int
+	CommentID  int64
+	CommentURL string
+	Agent      string
+	StartedAt  time.Time
+	// Done 表示这一轮结束（成功、失败或被停掉都会发一次）。
+	Done bool
+	// Cancel 用来中止这一轮出稿：ACP 子进程会被一起杀掉。
+	Cancel context.CancelFunc
 }
 
 // DraftInput 是 Runner 交给上层的一条待审草稿。
@@ -75,11 +92,17 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 			if handled >= r.Config.MaxPerPoll {
 				break
 			}
+			// 条目级忽略：整条不再处理，连评论都不拉。
+			if repoState.IsIgnoredIssue(issue.Number) {
+				continue
+			}
 			comments, err := r.GH.ListIssueCommentsSince(ctx, repo, issue.Number, since)
 			if err != nil {
 				return handled, fmt.Errorf("%s#%d 列评论失败: %w", repo, issue.Number, err)
 			}
-			filter := Filter{Me: r.Me, Trigger: r.Config.Trigger, Allowed: allowed, Seen: repoState.Has}
+			filter := Filter{Me: r.Me, Trigger: r.Config.Trigger, Allowed: allowed, Seen: func(id int64) bool {
+				return repoState.Has(id) || repoState.IsIgnoredComment(id)
+			}}
 			for _, comment := range comments {
 				if handled >= r.Config.MaxPerPoll {
 					break
@@ -103,10 +126,40 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 }
 
 func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, comment ghapi.Comment, thread []ghapi.Comment, repoState *state.Repo) error {
-	r.logf("  命中 #%d 的评论 %d（%s），交给 %s 出稿", issue.Number, comment.ID, comment.User.Login, r.Responder.Label())
-	prompt := BuildPrompt(PromptInput{Repo: repo, Issue: issue, Comment: comment, Thread: thread, Instructions: r.Instructions})
+	agentLabel := r.Responder.Label()
+	r.logf("  命中 #%d 的评论 %d（%s），交给 %s 出稿", issue.Number, comment.ID, comment.User.Login, agentLabel)
+	if r.OnTask != nil {
+		// 每条任务一个可取消的 context：界面上点「停止」只中止这一条。
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		ctx = runCtx
+		r.OnTask(&Task{
+			Repo:       repo,
+			Number:     issue.Number,
+			CommentID:  comment.ID,
+			CommentURL: comment.HTMLURL,
+			Agent:      agentLabel,
+			StartedAt:  time.Now(),
+			Cancel:     cancel,
+		})
+		defer r.OnTask(&Task{Repo: repo, Number: issue.Number, Done: true})
+	}
+	// 本轮窗口里的评论只够找新评论；出稿要完整上下文——之前谁回过什么，
+	// 模型得看得到，才不会把已经说过的话再说一遍。
+	if full, err := r.GH.ListIssueComments(ctx, repo, issue.Number); err == nil && len(full) > 0 {
+		thread = full
+	} else if err != nil {
+		r.logf("  ! #%d 取完整评论失败，只用本轮窗口：%v", issue.Number, err)
+	}
+	prompt := BuildPrompt(PromptInput{Repo: repo, Issue: issue, Comment: comment, Thread: thread, Instructions: r.Instructions, Me: r.Me})
 	reply, err := r.Responder.Respond(ctx, Request{Repo: repo, System: r.Instructions, User: prompt})
 	if err != nil {
+		// 用户在界面上点了「停止」：这条评论记成已处理，别下一轮又自动重跑。
+		if ctx.Err() != nil {
+			r.logf("  ⏹ #%d 已停止，不再自动重试", issue.Number)
+			repoState.Mark(comment.ID)
+			return nil
+		}
 		return err
 	}
 	body := Finalize(reply.Text, r.Config.Signature)

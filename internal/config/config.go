@@ -10,22 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
-
-// Provider 是模型端点配置。kind 目前只支持 openai（任何 OpenAI 兼容端点：
-// magpie / ollama / vllm / 中转站）。
-type Provider struct {
-	Kind            string  `json:"kind"`
-	BaseURL         string  `json:"base_url"`
-	Model           string  `json:"model"`
-	APIKeyEnv       string  `json:"api_key_env"`
-	APIKey          string  `json:"api_key"`
-	TimeoutSeconds  int     `json:"timeout_seconds"`
-	MaxOutputTokens int     `json:"max_output_tokens"`
-	Temperature     float64 `json:"temperature"`
-}
 
 // Config 是完整配置。所有字段都有默认值，缺字段的文件按默认补齐。
 type Config struct {
@@ -36,7 +24,6 @@ type Config struct {
 	MaxPerPoll          int      `json:"max_per_poll"`
 	DryRun              bool     `json:"dry_run"`
 	AllowedAssociations []string `json:"allowed_associations"`
-	Provider            Provider `json:"provider"`
 	Signature           string   `json:"signature"`
 	InstructionsFile    string   `json:"instructions_file"`
 	// Agent 决定谁出稿："llm"（默认，打 provider 端点）或本地 agent 的 id（pi / codebuddy）。
@@ -60,20 +47,11 @@ func Default() Config {
 		MaxPerPoll:          2,
 		DryRun:              true,
 		AllowedAssociations: []string{"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"},
-		Provider: Provider{
-			Kind:            "openai",
-			BaseURL:         "http://127.0.0.1:3425/v1",
-			Model:           "auto/deepseek-v4.1-flash",
-			APIKeyEnv:       "MAGPIE_API_KEY",
-			TimeoutSeconds:  180,
-			MaxOutputTokens: 1200,
-			Temperature:     0.2,
-		},
-		Signature:        "*由 agent 协助生成*",
-		InstructionsFile: "",
-		Agent:            "llm",
-		AgentPermission:  "bypass",
-		RepoPaths:        map[string]string{},
+		Signature:           "*由 agent 协助生成*",
+		InstructionsFile:    "",
+		Agent:               "",
+		AgentPermission:     "bypass",
+		RepoPaths:           map[string]string{},
 	}
 }
 
@@ -124,7 +102,46 @@ func Load(path string) (Config, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return Config{}, fmt.Errorf("解析配置 %s: %w", path, err)
 	}
+	// 配了本地目录的仓库默认就监控，不用在 repos 里再写一遍。
+	cfg.Normalize()
 	return cfg, nil
+}
+
+// MonitoredRepos 返回实际要轮询的仓库：repos 加上 repo_paths 里的键。
+// 顺序是 repos 在前，映射里多出来的按名字排。
+func (c Config) MonitoredRepos() []string {
+	out := make([]string, 0, len(c.Repos)+len(c.RepoPaths))
+	seen := make(map[string]bool, cap(out))
+	add := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		key := strings.ToLower(repo)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, repo)
+	}
+	for _, repo := range c.Repos {
+		add(repo)
+	}
+	keys := make([]string, 0, len(c.RepoPaths))
+	for repo := range c.RepoPaths {
+		keys = append(keys, repo)
+	}
+	sort.Strings(keys)
+	for _, repo := range keys {
+		add(repo)
+	}
+	return out
+}
+
+// Normalize 把 repo_paths 里的仓库并进 repos。Load 之后调用，
+// 这样轮询、界面、状态文件看到的都是同一份仓库列表。
+func (c *Config) Normalize() {
+	c.Repos = c.MonitoredRepos()
 }
 
 // Save 原子写配置（同目录临时文件 + rename）。
@@ -152,19 +169,14 @@ func (c Config) Save(path string) error {
 
 // Validate 校验必填项，并把明显不合理的数值收回到安全范围。
 func (c *Config) Validate() error {
-	if len(c.Repos) == 0 {
-		return errors.New("配置里 repos 为空：先填一个 owner/name")
+	repos := c.MonitoredRepos()
+	if len(repos) == 0 {
+		return errors.New("配置里没有仓库：先填一个 owner/name")
 	}
-	for _, repo := range c.Repos {
+	for _, repo := range repos {
 		if strings.Count(repo, "/") != 1 || strings.HasPrefix(repo, "/") || strings.HasSuffix(repo, "/") {
 			return fmt.Errorf("仓库名必须形如 owner/name，收到 %q", repo)
 		}
-	}
-	if strings.TrimSpace(c.Provider.BaseURL) == "" {
-		return errors.New("provider.base_url 不能为空")
-	}
-	if strings.TrimSpace(c.Provider.Model) == "" {
-		return errors.New("provider.model 不能为空")
 	}
 	if c.IntervalSeconds < 15 {
 		c.IntervalSeconds = 15
@@ -175,19 +187,13 @@ func (c *Config) Validate() error {
 	if c.MaxPerPoll < 1 {
 		c.MaxPerPoll = 1
 	}
-	if c.Provider.TimeoutSeconds < 10 {
-		c.Provider.TimeoutSeconds = 10
-	}
-	if c.Provider.MaxOutputTokens < 128 {
-		c.Provider.MaxOutputTokens = 128
-	}
 	// trigger 允许为空：空表示任何 issue / PR 评论都处理，不强制回填。
 	if len(c.AllowedAssociations) == 0 {
 		c.AllowedAssociations = Default().AllowedAssociations
 	}
 	c.Agent = strings.TrimSpace(c.Agent)
 	if c.Agent == "" {
-		c.Agent = "llm"
+		return errors.New("还没选出稿方：在设置里选 CodeBuddy / Codex / Claude Code / pi")
 	}
 	c.AgentPermission = strings.TrimSpace(strings.ToLower(c.AgentPermission))
 	switch c.AgentPermission {

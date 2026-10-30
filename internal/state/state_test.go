@@ -1,6 +1,7 @@
 package state
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -38,5 +39,37 @@ func TestSinceAndAdvance(t *testing.T) {
 	// 游标记的是「上次跑完的时刻」，回退只在 Since 里做一次
 	if got := repo.Since(time.Minute, now.Add(time.Hour)); !got.Equal(now.Add(-time.Minute)) {
 		t.Errorf("有游标时应从游标-overlap 开始，得到 %v", got)
+	}
+}
+
+func TestIgnorePersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	st := Load(path)
+	repo := st.For("o/r")
+	repo.IgnoreComment(42, "重复提问")
+	repo.IgnoreIssue(7, "已人工处理")
+	if !repo.IsIgnoredComment(42) || repo.CommentNote(42) != "重复提问" {
+		t.Fatal("评论忽略没记下来")
+	}
+	if !repo.IsIgnoredIssue(7) || repo.IssueNote(7) != "已人工处理" {
+		t.Fatal("条目忽略没记下来")
+	}
+	if err := st.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	again := Load(path).For("o/r")
+	if !again.IsIgnoredComment(42) || again.CommentNote(42) != "重复提问" {
+		t.Error("评论忽略没落盘")
+	}
+	if !again.IsIgnoredIssue(7) || again.IssueNote(7) != "已人工处理" {
+		t.Error("条目忽略没落盘")
+	}
+
+	again.UnignoreComment(42)
+	again.UnignoreIssue(7)
+	if again.IsIgnoredComment(42) || again.IsIgnoredIssue(7) {
+		t.Error("取消忽略后不应再命中")
 	}
 }

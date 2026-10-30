@@ -16,6 +16,14 @@ export interface AgentInfo {
   current: boolean;
 }
 
+/** AgentProbe 是一次 ACP 探测的结果：默认模型、可用模型、能力。 */
+export interface AgentProbe {
+  id: string;
+  ok: boolean;
+  detail?: string;
+  info: Details;
+}
+
 /** ConfigDTO 是前端看到的配置。token 不在这里：它来自 GH_TOKEN 或 gh auth。 */
 export interface ConfigDTO {
   repos: string[];
@@ -26,13 +34,7 @@ export interface ConfigDTO {
   dryRun: boolean;
   allowedAssociations: string[];
   signature: string;
-  baseUrl: string;
-  model: string;
-  apiKeyEnv: string;
-  timeoutSeconds: number;
-  maxOutputTokens: number;
-  temperature: number;
-  /** Agent 是默认出稿方：llm / codebuddy / pi。 */
+  /** Agent 是默认出稿方：codebuddy / codex / claude / pi。 */
   agent: string;
   /** AgentPermission 是本地 agent 的工具权限：bypass / write / read / deny。 */
   agentPermission: string;
@@ -40,7 +42,22 @@ export interface ConfigDTO {
   repoPaths: Record<string, string>;
 }
 
-/** Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed。 */
+/**
+ * Details 是 initialize / session/new 里能拿到的 agent 参数：
+ * 名字版本、协议能力、可用模型和模式。界面上用来展示「它是什么、默认用什么模型」。
+ */
+export interface Details {
+  agentName?: string;
+  agentVersion?: string;
+  protocol?: number;
+  capabilities?: string[];
+  models?: string[];
+  currentModel?: string;
+  modes?: string[];
+  currentMode?: string;
+}
+
+/** Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed / ignored。 */
 export interface Draft {
   id: string;
   repo: string;
@@ -50,18 +67,81 @@ export interface Draft {
   commentUrl: string;
   author: string;
   body: string;
+  /** Kind 是条目类型：issue / pr；Type 是 issue 的类别：bug / feature。 */
+  kind: string;
+  type?: string;
+  /** Note 是「忽略」时写的备注。 */
+  note?: string;
   /** Agent 是产出这条草稿的 agent 名字。 */
   agent: string;
   /** Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。 */
   prompt?: string;
   /** Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。 */
   changes?: Result;
-  /** Branch / Commit 是批准时改动落到的分支和提交，没有改动时为空。 */
+  /**
+   * Branch / Commit 是改动落到的分支和提交。审查会在出稿后自动提交，
+   * 轮询出来的草稿仍然等批准时再提交。
+   */
   branch?: string;
   commit?: string;
+  /** Merge 表示 PR 审查结论是「可以合并」，批准时会先合并再回帖。 */
+  merge?: boolean;
   createdAt: string;
   status: string;
   error?: string;
+}
+
+/** Item 是轮询覆盖到的一个 issue / PR，条目列表按它渲染。 */
+export interface Item {
+  id: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  /** Kind 是 issue / pr。 */
+  kind: string;
+  /** Type 是 issue 的类别：bug / feature，识别不出来时为空。 */
+  type?: string;
+  /** Labels 是原始标签名，界面上原样展示。 */
+  labels: string[];
+  author: string;
+  comments: number;
+  updatedAt: string;
+  /** Replied 表示已经有自己发的回复（GitHub 上已存在，或草稿已发送）。 */
+  replied: boolean;
+  repliedAt?: string;
+  /** Replies 是已经加载出来的回复，最多保留最近几条。 */
+  replies: ItemReply[];
+  /** Committed 表示这个条目已经有提交：草稿提交过，或回复里带了 commit 链接。 */
+  committed: boolean;
+  commit?: string;
+  branch?: string;
+  /** Ignored 是条目级忽略；IgnoreNote 是当时写的备注。 */
+  ignored: boolean;
+  ignoreNote?: string;
+  /** DraftID / DraftStatus 是最近一条相关草稿，方便从列表跳回待审。 */
+  draftId?: string;
+  draftStatus?: string;
+}
+
+/** ItemReply 是条目下已经存在的一条回复（评论），给条目列表展开时看。 */
+export interface ItemReply {
+  author: string;
+  body: string;
+  url: string;
+  createdAt: string;
+  /** Mine 表示这条是自己（gh-agent 账号）发的。 */
+  mine: boolean;
+  /** Commit 是正文里提到的提交 sha，没有则为空。 */
+  commit?: string;
+}
+
+/** ItemsSnapshot 是条目列表的一次快照：加载中也会推一版，界面好显示进度。 */
+export interface ItemsSnapshot {
+  items: Item[];
+  loading: boolean;
+  error?: string;
+  fetchedAt?: string;
 }
 
 /** LogLine 是一行运行日志。 */
@@ -101,6 +181,17 @@ export interface StatusDTO {
   handled: number;
   pending: number;
   configPath: string;
+  /** Tasks 是正在出稿的那些条目：界面显示「正在处理 #N（agent）已 42s」。 */
+  tasks: TaskDTO[];
+}
+
+/** TaskDTO 是正在出稿的那一条，界面用它显示「处理中」。 */
+export interface TaskDTO {
+  repo: string;
+  number: number;
+  commentUrl: string;
+  agent: string;
+  startedAt: string;
 }
 
 // ---- Services ----
@@ -123,13 +214,31 @@ export const Service = {
   checkPath(path: string): Promise<PathCheck> {
     return call("Service.CheckPath", path);
   },
-  /** Config 返回当前配置。 */
+  /**
+   * Config 返回当前配置。
+   * 每次都从磁盘重读：用户直接改 config.json 也能在界面上看到。
+   */
   config(): Promise<ConfigDTO> {
     return call("Service.Config");
   },
   /** Drafts 返回全部草稿，新的在前。 */
   drafts(): Promise<Draft[]> {
     return call("Service.Drafts");
+  },
+  /** Ignore 手动忽略一条待审草稿：之后轮询不再处理这条评论，备注会留在列表里。 */
+  ignore(id: string, note: string): Promise<Draft> {
+    return call("Service.Ignore", id, note);
+  },
+  /**
+   * IgnoreItem 忽略整个条目：之后轮询不再处理它的任何评论。
+   * 这个条目下还在待审的草稿也一并忽略，免得「列表说忽略了，待审里还能发」。
+   */
+  ignoreItem(repo: string, number: number, note: string): Promise<ItemsSnapshot> {
+    return call("Service.IgnoreItem", repo, number, note);
+  },
+  /** Items 返回缓存的条目列表；没刷新过就是空的。 */
+  items(): Promise<ItemsSnapshot> {
+    return call("Service.Items");
   },
   /** Logs 返回运行日志，旧的在前。 */
   logs(): Promise<LogLine[]> {
@@ -139,19 +248,43 @@ export const Service = {
   openExternal(url: string): Promise<void> {
     return call("Service.OpenExternal", url);
   },
+  /**
+   * ProbeAgent 拉起一次 agent，读它报的模型和能力并缓存。
+   * refresh 为 true 时忽略缓存（界面上的「重新读取」）。
+   */
+  probeAgent(id: string, refresh: boolean): Promise<AgentProbe> {
+    return call("Service.ProbeAgent", id, refresh);
+  },
   /** Redraft 用指定的 agent 把同一条评论重新出一遍稿，覆盖原来那条。 */
   redraft(id: string, agentID: string): Promise<Draft> {
     return call("Service.Redraft", id, agentID);
+  },
+  /**
+   * RefreshItems 在后台重新拉一遍条目列表，立刻返回「加载中」的快照，
+   * 拉完通过 EventItems 推一版完整的。
+   */
+  refreshItems(): Promise<ItemsSnapshot> {
+    return call("Service.RefreshItems");
   },
   /** Reject 丢弃一条待审草稿，不会发到 GitHub。 */
   reject(id: string): Promise<Draft> {
     return call("Service.Reject", id);
   },
-  /** SaveConfig 校验并写盘；正在跑的话用新配置重启轮询。 */
+  /**
+   * ReviewItem 立刻让默认出稿方审查一条 issue / PR：改代码、提交、写回复，结果进待审。
+   * 手动触发，不用等轮询。锁按条目分：同一条目串行，不同条目可以同时跑。
+   */
+  reviewItem(repo: string, number: number): Promise<Draft> {
+    return call("Service.ReviewItem", repo, number);
+  },
+  /** SaveConfig 校验并写盘；之前想跑（desired）的话用新配置重启轮询。 */
   saveConfig(in_: ConfigDTO): Promise<ConfigDTO> {
     return call("Service.SaveConfig", in_);
   },
-  /** Start 开始轮询：先立刻跑一轮，之后按 interval_seconds。 */
+  /**
+   * Start 开始轮询：先立刻跑一轮，之后按 interval_seconds。
+   * 配置每次从磁盘重读，用户在设置里改完保存、或直接改 config.json 都能生效。
+   */
   start(): Promise<StatusDTO> {
     return call("Service.Start");
   },
@@ -162,6 +295,18 @@ export const Service = {
   /** Stop 停止轮询（正在跑的那一轮会跑完）。 */
   stop(): Promise<StatusDTO> {
     return call("Service.Stop");
+  },
+  /** StopTask 停掉某个条目正在跑的出稿：轮询和手动审查都能停。 */
+  stopTask(repo: string, number: number): Promise<void> {
+    return call("Service.StopTask", repo, number);
+  },
+  /** Unignore 撤销忽略，把草稿放回待审。 */
+  unignore(id: string): Promise<Draft> {
+    return call("Service.Unignore", id);
+  },
+  /** UnignoreItem 撤销条目级忽略，之后的新评论会重新处理。 */
+  unignoreItem(repo: string, number: number): Promise<ItemsSnapshot> {
+    return call("Service.UnignoreItem", repo, number);
   },
   /** UpdateDraft 改一条待审草稿的正文（人工润色后再发）。 */
   updateDraft(id: string, body: string): Promise<Draft> {
@@ -176,4 +321,5 @@ export const events = {
   log: event<LogLine>("log"),
   draft: event<Draft>("draft"),
   status: event<StatusDTO>("status"),
+  items: event<ItemsSnapshot>("items"),
 } as const;

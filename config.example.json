@@ -6,16 +6,8 @@
   "max_per_poll": 2,
   "dry_run": true,
   "allowed_associations": ["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"],
-  "provider": {
-    "kind": "openai",
-    "base_url": "http://127.0.0.1:3425/v1",
-    "model": "auto/deepseek-v4.1-flash",
-    "api_key_env": "MAGPIE_API_KEY",
-    "timeout_seconds": 180,
-    "max_output_tokens": 1200
-  },
   "signature": "*由 agent 协助生成*",
-  "agent": "llm",
+  "agent": "codebuddy",
   "agent_permission": "bypass",
   "repo_paths": {}
 }

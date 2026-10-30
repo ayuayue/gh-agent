@@ -66,7 +66,7 @@ func main() {
 	}
 
 	logf("仓库 %s｜身份 %s｜%s｜间隔 %ds", strings.Join(cfg.Repos, ", "), runner.Me, modeLabel(!cfg.DryRun), cfg.IntervalSeconds)
-	logf("模型 %s @ %s", cfg.Provider.Model, cfg.Provider.BaseURL)
+	logf("出稿方 %s", cfg.Agent)
 
 	if *runOnce {
 		handled, err := runner.RunOnce(ctx)

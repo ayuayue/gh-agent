@@ -24,6 +24,20 @@ var Catalog = []Agent{
 		Desc:    "腾讯 CodeBuddy Code，原生 ACP",
 	},
 	{
+		ID:      "codex",
+		Name:    "Codex",
+		Command: "npx -y @zed-industries/codex-acp",
+		Require: []string{"npx", "codex"},
+		Desc:    "OpenAI Codex CLI，经 codex-acp 适配器",
+	},
+	{
+		ID:      "claude",
+		Name:    "Claude Code",
+		Command: "npx -y @zed-industries/claude-code-acp",
+		Require: []string{"npx", "claude"},
+		Desc:    "Anthropic Claude Code，经 claude-code-acp 适配器",
+	},
+	{
 		ID:      "pi",
 		Name:    "pi",
 		Command: "npx -y pi-acp",

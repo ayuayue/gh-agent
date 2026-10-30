@@ -53,7 +53,7 @@ func TestCommitDraftCreatesBranch(t *testing.T) {
 		Changes:    &worktree.Result{Files: []string{"a.txt"}},
 	}
 
-	branch, sha, err := commitDraft(cfg, d)
+	branch, sha, err := commitDraft(cfg, d, false)
 	if err != nil {
 		t.Fatalf("commitDraft: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestCommitDraftWithoutWorkdir(t *testing.T) {
 	cfg.RepoPaths = map[string]string{}
 	d := Draft{Repo: "o/r", Number: 1, Changes: &worktree.Result{Files: []string{"a.txt"}}}
 	// 没有配本地目录时会用配置目录下的空目录，那里不是 git 仓库
-	if _, _, err := commitDraft(cfg, d); err == nil {
+	if _, _, err := commitDraft(cfg, d, false); err == nil {
 		t.Error("不是 git 仓库时应该报错")
 	}
 }

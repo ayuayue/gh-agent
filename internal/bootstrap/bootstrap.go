@@ -16,7 +16,6 @@ import (
 	"github.com/ayuayue/gh-agent/internal/agent"
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
-	"github.com/ayuayue/gh-agent/internal/llm"
 	"github.com/ayuayue/gh-agent/internal/state"
 )
 
@@ -26,7 +25,7 @@ const agentTimeout = 8 * time.Minute
 // DefaultInstructions 是没有配置 instructions_file 时用的系统提示。
 const DefaultInstructions = `你在一个软件仓库里回答 issue / PR 评论。
 
-你只能看到下面给出的上下文：没有读文件、跑命令、联网的能力。
+你能不能读文件、跑命令取决于运行环境：能读就先看代码再回答，不能读就只基于给出的上下文。
 上下文里没有的仓库细节不要假装知道——直接说明还需要什么信息，或建议对方贴出来。
 不要输出工具调用、函数调用或任何 <...> 标记，只写正文。
 
@@ -43,6 +42,9 @@ type Options struct {
 	Verbose bool
 	// OnDraft 非空时，出稿进待审队列而不是直接发帖。
 	OnDraft agent.OnDraftFunc
+	// State 非空时复用调用方已经加载的状态：桌面壳和轮询线程共享同一份，
+	// 界面上点「忽略」之后，下一轮立刻生效。
+	State *state.State
 }
 
 // NewRunner 装配一个 Runner：解析 token、校验身份、加载状态与指令。
@@ -67,7 +69,10 @@ func NewRunner(cfg config.Config, opts Options) (*agent.Runner, error) {
 		return nil, err
 	}
 	statePath := filepath.Join(dir, "state.json")
-	st := state.Load(statePath)
+	st := opts.State
+	if st == nil {
+		st = state.Load(statePath)
+	}
 
 	if cfg.InstructionsFile != "" {
 		if _, err := os.ReadFile(cfg.InstructionsFile); err != nil {
@@ -91,6 +96,15 @@ func NewRunner(cfg config.Config, opts Options) (*agent.Runner, error) {
 		Logf:         opts.Logf,
 		OnDraft:      opts.OnDraft,
 	}, nil
+}
+
+// StatePath 是轮询状态文件路径：已处理的评论 id、手动忽略的条目和评论。
+func StatePath() (string, error) {
+	dir, err := config.Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "state.json"), nil
 }
 
 // ResolveToken 依次尝试 GH_TOKEN、GITHUB_TOKEN、gh auth token（复用已登录的 gh）。
@@ -121,25 +135,11 @@ func ResponderFor(cfg config.Config, agentID string, logf func(string, ...any)) 
 	if kind == "" {
 		kind = strings.TrimSpace(cfg.Agent)
 	}
-	if kind == "" || kind == "llm" {
-		apiKey := ""
-		if cfg.Provider.APIKeyEnv != "" {
-			apiKey = os.Getenv(cfg.Provider.APIKeyEnv)
-		}
-		if apiKey == "" {
-			apiKey = cfg.Provider.APIKey
-		}
-		return llmResponder{client: llm.New(
-			cfg.Provider.BaseURL,
-			cfg.Provider.Model,
-			apiKey,
-			time.Duration(cfg.Provider.TimeoutSeconds)*time.Second,
-			cfg.Provider.MaxOutputTokens,
-			cfg.Provider.Temperature,
-		)}, nil
+	if kind == "" {
+		return nil, errors.New("还没选出稿方：在设置里选 CodeBuddy / Codex / Claude Code / pi")
 	}
 	if _, ok := acp.Lookup(kind); !ok {
-		return nil, fmt.Errorf("配置里的 agent %q 不认识，可选：llm、codebuddy、pi", kind)
+		return nil, fmt.Errorf("配置里的 agent %q 不认识，可选：codebuddy、codex、claude、pi", kind)
 	}
 	return &acp.Responder{
 		AgentID: kind,
@@ -178,13 +178,13 @@ func RepoWorkdir(cfg config.Config, repo string) string {
 	return work
 }
 
-// llmResponder 把 llm.Client 适配成 agent.Responder，
-// 这样 llm 包不用反向依赖 agent。
-type llmResponder struct{ client *llm.Client }
-
-func (r llmResponder) Respond(ctx context.Context, req agent.Request) (agent.Reply, error) {
-	text, err := r.client.Chat(ctx, req.System, req.User)
-	return agent.Reply{Text: text}, err
+// ReviewInstructions 是手动审查的系统提示：默认那段是给「没有工具」的模型写的，
+// 审查一般跑在能读代码的本地 agent 里，所以单独给一份；配了自定义指令就拼在后面。
+func ReviewInstructions(cfg config.Config) string {
+	if cfg.InstructionsFile != "" {
+		if raw, err := os.ReadFile(cfg.InstructionsFile); err == nil && strings.TrimSpace(string(raw)) != "" {
+			return strings.TrimSpace(string(raw)) + "\n\n" + agent.ReviewWorkflow
+		}
+	}
+	return agent.ReviewInstructions
 }
-
-func (r llmResponder) Label() string { return r.client.Model }

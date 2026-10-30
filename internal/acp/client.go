@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -24,12 +25,26 @@ import (
 // protocolVersion 是 ACP v1 的版本号。
 const protocolVersion = 1
 
+// Details 是 initialize / session/new 里能拿到的 agent 参数：
+// 名字版本、协议能力、可用模型和模式。界面上用来展示「它是什么、默认用什么模型」。
+type Details struct {
+	AgentName    string   `json:"agentName,omitempty"`
+	AgentVersion string   `json:"agentVersion,omitempty"`
+	Protocol     int      `json:"protocol,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Models       []string `json:"models,omitempty"`
+	CurrentModel string   `json:"currentModel,omitempty"`
+	Modes        []string `json:"modes,omitempty"`
+	CurrentMode  string   `json:"currentMode,omitempty"`
+}
+
 // Client 是一个已经握手完成的 ACP 会话。
 type Client struct {
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	sessionID string
 	stderr    *tailBuffer
+	details   Details
 
 	mu      sync.Mutex
 	nextID  int64
@@ -131,29 +146,68 @@ func Start(ctx context.Context, command, cwd string, opts ...Option) (*Client, e
 	}()
 
 	if err := c.handshake(ctx, cwd); err != nil {
+		// 把 stderr 尾巴带上：agent 启动失败（配置坏了、没登录）时，
+		// 「进程已退出」本身说明不了任何问题。
+		tail := c.stderr.String()
 		c.Close()
+		if tail != "" {
+			return nil, fmt.Errorf("%w（agent stderr：%s）", err, tail)
+		}
 		return nil, err
 	}
 	return c, nil
 }
 
 func (c *Client) handshake(ctx context.Context, cwd string) error {
+	var init struct {
+		ProtocolVersion int `json:"protocolVersion"`
+		AgentInfo       struct {
+			Name    string `json:"name"`
+			Title   string `json:"title"`
+			Version string `json:"version"`
+		} `json:"agentInfo"`
+		AgentCapabilities struct {
+			LoadSession        bool `json:"loadSession"`
+			PromptCapabilities struct {
+				Image           bool `json:"image"`
+				Audio           bool `json:"audio"`
+				EmbeddedContext bool `json:"embeddedContext"`
+			} `json:"promptCapabilities"`
+			MCPCapabilities struct {
+				HTTP bool `json:"http"`
+				SSE  bool `json:"sse"`
+			} `json:"mcpCapabilities"`
+		} `json:"agentCapabilities"`
+	}
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	_, err := c.call(initCtx, "initialize", map[string]any{
+	if err := c.callInto(initCtx, "initialize", map[string]any{
 		"protocolVersion": protocolVersion,
 		"clientCapabilities": map[string]any{
 			// 我们不提供文件读写和终端，agent 要用就自己用它的工具。
 			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
 			"terminal": false,
 		},
-	})
-	if err != nil {
+	}, &init); err != nil {
 		return fmt.Errorf("initialize 失败：%w", err)
 	}
 
 	var session struct {
 		SessionID string `json:"sessionId"`
+		Models    struct {
+			CurrentModelID  string `json:"currentModelId"`
+			AvailableModels []struct {
+				ModelID string `json:"modelId"`
+				Name    string `json:"name"`
+			} `json:"availableModels"`
+		} `json:"models"`
+		Modes struct {
+			CurrentModeID  string `json:"currentModeId"`
+			AvailableModes []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"availableModes"`
+		} `json:"modes"`
 	}
 	newCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel2()
@@ -167,7 +221,75 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 		return errors.New("session/new 没有返回 sessionId")
 	}
 	c.sessionID = session.SessionID
+
+	info := Details{
+		AgentName:    init.AgentInfo.Name,
+		AgentVersion: init.AgentInfo.Version,
+		Protocol:     init.ProtocolVersion,
+		CurrentModel: session.Models.CurrentModelID,
+		CurrentMode:  session.Modes.CurrentModeID,
+	}
+	if info.AgentName == "" {
+		info.AgentName = init.AgentInfo.Title
+	}
+	if init.AgentCapabilities.LoadSession {
+		info.Capabilities = append(info.Capabilities, "loadSession")
+	}
+	if init.AgentCapabilities.PromptCapabilities.Image {
+		info.Capabilities = append(info.Capabilities, "图片输入")
+	}
+	if init.AgentCapabilities.PromptCapabilities.Audio {
+		info.Capabilities = append(info.Capabilities, "音频输入")
+	}
+	if init.AgentCapabilities.PromptCapabilities.EmbeddedContext {
+		info.Capabilities = append(info.Capabilities, "内嵌上下文")
+	}
+	if init.AgentCapabilities.MCPCapabilities.HTTP {
+		info.Capabilities = append(info.Capabilities, "mcp.http")
+	}
+	if init.AgentCapabilities.MCPCapabilities.SSE {
+		info.Capabilities = append(info.Capabilities, "mcp.sse")
+	}
+	for _, model := range session.Models.AvailableModels {
+		name := model.Name
+		if name == "" {
+			name = model.ModelID
+		}
+		if name != "" {
+			info.Models = append(info.Models, name)
+		}
+	}
+	for _, mode := range session.Modes.AvailableModes {
+		name := mode.Name
+		if name == "" {
+			name = mode.ID
+		}
+		if name != "" {
+			info.Modes = append(info.Modes, name)
+		}
+	}
+	c.details = info
 	return nil
+}
+
+// Details 返回握手时记下的 agent 参数。
+func (c *Client) Details() Details { return c.details }
+
+// Probe 启动一次 agent，读它在 initialize / session/new 里报的模型和能力，然后关掉。
+// 只用于界面展示：策略设成拒绝，不跑任何工具。
+func Probe(ctx context.Context, def Agent) (Details, error) {
+	dir, err := os.MkdirTemp("", "gh-agent-probe-")
+	if err != nil {
+		return Details{}, err
+	}
+	defer os.RemoveAll(dir)
+
+	client, err := Start(ctx, def.Command, dir, WithPolicy(PolicyDeny))
+	if err != nil {
+		return Details{}, err
+	}
+	defer client.Close()
+	return client.Details(), nil
 }
 
 // Prompt 发一轮对话，返回 agent 的正文（流式片段拼起来）。
@@ -229,6 +351,15 @@ func (c *Client) Close() error {
 		}
 	})
 	return nil
+}
+
+// PID 返回底层 agent 进程的 pid；还没启动时是 0。
+// 日志里带上它，用户能在任务管理器里对上是哪个进程。
+func (c *Client) PID() int {
+	if c == nil || c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
 }
 
 func (c *Client) readLoop(r io.Reader) {

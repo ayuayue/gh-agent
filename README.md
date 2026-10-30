@@ -1,9 +1,10 @@
 # gh-agent
 
-本机轮询 GitHub，把 issue / PR 评论交给**本地模型**处理并回帖的小工具。
+本机轮询 GitHub，把 issue / PR 交给**本机 agent**（CodeBuddy / Codex / Claude Code / pi）
+分析、改代码、出稿并回帖的小工具。
 
 不依赖 GitHub Actions、不开公网端口、不装 GitHub App：只做**出站**请求
-（读 GitHub REST + 调本地 OpenAI 兼容端点），跑在你自己机器上。
+（读 GitHub REST + 调本机 agent），跑在你自己机器上。
 
 两种形态共用同一套内核：
 
@@ -20,22 +21,67 @@ npm run dev          # 起 Vite + 编译并启动应用，改 .go 或 .tsx 都�
 npm run build        # 打包到 build/
 ```
 
-窗口三块：**待审**（草稿 + markdown 预览 + 批准/驳回）、**事件流**（轮询日志）、
-**设置**（仓库、间隔、触发词、模型端点）。关掉窗口不退出，点托盘图标再开。
+窗口四块：**待审**（草稿 + markdown 预览 + 批准/驳回/忽略）、**条目**（issue / PR
+列表与已有回复）、**事件流**（轮询日志）、**设置**（仓库、间隔、触发词、出稿方）。
+关掉窗口不退出，点托盘图标再开。
 
 草稿落盘在 `%AppData%/gh-agent/drafts.json`，重启不丢。
 
 > 桌面壳永远走人工审核，不会自己发帖。要全自动，用 CLI 的 `--live`。
 
-## 出稿方：模型端点 还是 本地 agent
+启动应用就会自动开始轮询（托盘菜单也能手动开始 / 停止），每 `interval_seconds` 跑一轮：
+列出 since 之后有更新的 issue / PR → 拉评论 → 过触发规则 → 交给本地 agent 出稿 →
+进「待审」。命中之后窗口顶部会出现「正在处理 repo#N · agent · 已 42s」，右边能直接
+**停止**这一条；事件流里还会打出 `CodeBuddy 已启动（pid 1234）`，方便对上进程。
 
-配置里的 `agent` 决定谁来写这条回复：
+### 条目列表
 
-| 值 | 怎么跑 | 能看到代码 | 单条耗时 |
-|---|---|---|---|
-| `llm`（默认） | 打 `provider.base_url` 的 OpenAI 兼容端点 | 否，只看 prompt 里的上下文 | 数秒 |
-| `codebuddy` | `codebuddy --acp --acp-transport stdio` | 是 | 十几秒到一分钟 |
-| `pi` | `npx -y pi-acp` | 是 | 类似 |
+「条目」页签按需从配置的仓库拉一次 open 的 issue / PR，按 Issue 和 PR 分组：
+
+- Issue 会标出 Bug / Feature：先看标签，没有标签再看标题里的 `[Bug]`、`bug:`、`需求`；
+- **已回复**：GitHub 上已经有自己发的评论，或本地草稿已发送；
+- **已提交**：草稿批准时提交过分支，或回复正文里带了 `/commit/<sha>` 链接；
+- 展开能看到已经加载出来的回复（最近 8 条），提到 commit 的会单独标出来。
+
+列表不跟着轮询自动刷新——点「刷新」或批准/发送之后才重新拉，省 GitHub 配额。
+
+每行右边的「审查」是手动触发，不用等轮询。agent 按条目类型自己决定做到哪一步：
+
+- **Bug**：先定位根因、改代码；正文或评论里已有方案就先评估，可行按它做，不可行说明原因；
+- **Feature**：改动小、好验证的直接实现；影响面大的只给方案、不动代码；
+- **PR**：看改动判断能不能合，没问题会在回复里带一个隐藏的合并标记。
+
+审查完成会自动把改动提交到 `gh-agent/issue-<编号>` 分支，提交信息带 `[gh-agent]` 前缀和
+`Auto-Committed-By: gh-agent` trailer，一眼能认出是自动提交；然后草稿进「待审」。
+批准时只发回复；PR 带合并标记的，批准会先合并再回帖。
+
+锁按条目分：不同条目可以同时审查，同一条目串行。窗口顶部的任务条每条都有「停止」，
+停掉的这条评论不会在下一轮自动重试。
+
+### 忽略
+
+「忽略」分两级，都可以写一句备注：
+
+- **草稿上忽略**：只跳过这一条评论，之后轮询不再处理它；
+- **条目上忽略**：整条 issue / PR 都不再处理，它下面还在待审的草稿会一起变成「已忽略」。
+
+忽略只影响之后的轮询，不改动 GitHub；历史里点「恢复」、条目上点「取消忽略」可以撤销。
+忽略记录跟着已处理 id 一起写在 `state.json` 里。
+
+## 出稿方：四个本地 agent 里选一个
+
+配置里的 `agent` 决定谁来写这条回复（默认没选，必须选一个）：
+
+| 值 | 怎么跑 | 说明 |
+|---|---|---|
+| `codebuddy` | `codebuddy --acp --acp-transport stdio` | 腾讯 CodeBuddy Code，原生 ACP |
+| `codex` | `npx -y @zed-industries/codex-acp` | OpenAI Codex CLI，经 codex-acp 适配器 |
+| `claude` | `npx -y @zed-industries/claude-code-acp` | Claude Code，经 claude-code-acp 适配器 |
+| `pi` | `npx -y pi-acp` | pi coding agent，经 pi-acp 适配器 |
+
+四个都跑在本机进程里，默认都能读代码、跑命令。设置页每个 agent 卡片的「读取参数」会
+真起一次进程，通过 ACP 的 `initialize` / `session/new` 读出名字、版本、默认模型、可用模型
+和能力，显示在卡片下面（服务端有缓存，不会每次翻设置都重起）。
 
 本地 agent 走 **ACP（Agent Client Protocol）**，跟编辑器接 agent 是同一套协议。
 ACP 官方只提供 Kotlin / Python / Rust / TypeScript 的 SDK，没有 Go 版，
@@ -61,11 +107,14 @@ agent 要读代码，得先告诉它仓库在本地哪：
 "repo_paths": { "ayuayue/PiDeck": "D:/project/pideck" }
 ```
 
-可以映射任意多个仓库，一个仓库对应一个本地目录，互相独立。界面上会检查目录：
+可以映射任意多个仓库，一个仓库对应一个本地目录，互相独立。**配了映射的仓库会自动加入
+监控列表，不用在 `repos` 里再写一遍**——设置页里两者就是同一张表（仓库 + 可选目录）。
+界面上会检查目录：
 不存在、不是目录、不是 git 仓库都会标出来（不是 git 仓库时 agent 照样能改文件，
 但改动记录不下来，也就没法在批准时提交到分支）。
 
-没映射的仓库会在配置目录下开一个空的 `work/<repo>`，agent 只能靠 prompt 里的上下文回答。
+没填目录的仓库照样会被监控，只是本地 agent 会在配置目录下开一个空的 `work/<repo>`，
+读不到代码，只能靠 prompt 里的上下文回答。
 
 界面上每条草稿都能「换 agent 重做」：同一个 prompt 换一个 agent 再出一遍，方便对比；
 也可以「编辑」就地改正文再发。
@@ -76,13 +125,15 @@ agent 要读代码，得先告诉它仓库在本地哪：
 每轮出稿前后各取一次工作区快照，算出这次改了哪些文件，草稿上会多一个「代码改动」区块：
 文件清单 + 可展开的 unified diff。
 
-两条安全约定：
+提交时机分两种：
 
-- **出稿阶段不提交**：跑 agent 的过程中不 commit、不建分支、不碰索引，改动只留在工作区。
-- **跑之前脏就说明**：如果工作区原本就有未提交的修改，diff 里会标出「可能混着你自己改的内容」。
+- **轮询出的草稿**：出稿阶段不提交，点「批准并发送」时才提交到分支再回帖；
+- **手动「审查」**：agent 跑完就自动提交（提交信息带 `[gh-agent]` 和
+  `Auto-Committed-By: gh-agent`），批准只负责回帖；PR 带合并标记的，批准会先合并再回帖。
 
-点「批准并发送」时，如果这条草稿带着改动，会先把这些文件提交到一个新分支
-`gh-agent/issue-<编号>`（撞名自动加 `-2`、`-3`），再发评论。
+两种都会在提交前提醒：如果工作区原本就有未提交的修改，diff 里会标出「可能混着你自己改的内容」。
+
+提交到的是新分支 `gh-agent/issue-<编号>`（撞名自动加 `-2`、`-3`）。
 
 提交是这么做的：在临时目录 `git worktree add -b` 出一个干净副本，只把这次改动的文件
 拷进去提交，然后摘掉这个 worktree。所以：
@@ -107,8 +158,7 @@ ACP_EDIT=codebuddy go test ./internal/acp -run TestSmokeAgentEditsRepo -v
 # 1. 生成默认配置（写在 %AppData%/gh-agent/config.json）
 go run ./cmd/gh-agent --print-config > /dev/null
 
-# 2. 改配置：仓库、模型端点、触发词
-#    默认指向本机 magpie: http://127.0.0.1:3425/v1
+# 2. 改配置：仓库、出稿方（codebuddy / codex / claude / pi）、触发词
 
 # 3. 干跑一轮（只打印，不发评论）
 go run ./cmd/gh-agent --once
@@ -140,10 +190,9 @@ index.html, src/     前端（React + Vite），src/mygo.ts 是 mygo generate �
 mygo.config.ts       应用名、标识、打包方式
 cmd/gh-agent/        CLI 入口与参数
 internal/bootstrap/  装配：token → GitHub 客户端 → 模型客户端 → Runner（CLI 和桌面共用）
-internal/desk/       桌面服务层：配置读写、轮询控制、待审队列、事件推送
+internal/desk/       桌面服务层：配置读写、轮询控制、待审队列、条目列表、事件推送
 internal/config/     配置读写与校验
 internal/ghapi/      GitHub REST 最小封装（issue / comment / 回帖）
-internal/llm/        OpenAI 兼容客户端（magpie / ollama / vllm）
 internal/agent/      过滤规则、prompt 组装、轮询器
 internal/state/      游标与已处理 id（按仓库分开）
 ```
@@ -155,6 +204,8 @@ Go 的 `GOTOOLCHAIN=auto` 会自动下载对应工具链，**不需要动系统�
 
 ## 已知不做
 
-- 不自动合并 PR、不改代码、不开 PR —— 只回评论。
+- 不自动合并 PR：只有「审查」结论带合并标记、**并且你点了批准**的 PR 才会合并。
+- 不推送分支：自动提交只留在本地，推不推、推去哪你自己决定。
+- 不开新 PR。
 - 不处理 GitHub Discussions（需要 GraphQL，等有需求再说）。
 - PR 行内评论（review comments）暂不支持。
