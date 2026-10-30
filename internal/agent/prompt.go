@@ -63,9 +63,30 @@ func BuildPrompt(in PromptInput) string {
 	return sb.String()
 }
 
-// Finalize 裁剪模型输出并追加签名。
+// toolMarkupMarkers 是模型"自己发明工具调用"时会吐出来的标记前缀。
+// deepseek 系带工具能力的模型在没有 tools 参数时会这么干。
+var toolMarkupMarkers = []string{
+	"<｜｜DSML｜｜",
+	"｜｜DSML｜｜",
+	"<tool_call",
+	"</tool_call",
+	"<function_call",
+}
+
+// stripToolMarkup 从第一个标记处截断：宁可这条不发，也不能把标记贴进 issue。
+func stripToolMarkup(text string) string {
+	cut := len(text)
+	for _, marker := range toolMarkupMarkers {
+		if idx := strings.Index(text, marker); idx >= 0 && idx < cut {
+			cut = idx
+		}
+	}
+	return strings.TrimSpace(text[:cut])
+}
+
+// Finalize 裁剪模型输出并追加签名；返回空串表示这条不该发。
 func Finalize(text, signature string) string {
-	trimmed := strings.TrimSpace(text)
+	trimmed := stripToolMarkup(strings.TrimSpace(text))
 	if trimmed == "" {
 		return ""
 	}

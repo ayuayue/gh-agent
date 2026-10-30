@@ -60,3 +60,23 @@ func TestFinalize(t *testing.T) {
 		t.Errorf("超长输出应标注截断")
 	}
 }
+
+// 模型自己发明工具调用时，宁可这条不发，也不能把标记贴进 issue。
+func TestFinalizeDropsToolMarkup(t *testing.T) {
+	cases := []string{
+		"<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"bash\">ls</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
+		"<tool_call>{\"name\":\"bash\"}</tool_call>",
+		"<function_call>read_file</function_call>",
+	}
+	for _, raw := range cases {
+		if got := Finalize(raw, "签名"); got != "" {
+			t.Errorf("纯工具调用应被丢弃，得到 %q", got)
+		}
+	}
+
+	// 正文后跟工具调用：保留正文，丢掉尾巴。
+	mixed := "建议先看 AcpHandshake.ts。\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"bash\">"
+	if got := Finalize(mixed, ""); got != "建议先看 AcpHandshake.ts。" {
+		t.Errorf("应保留工具调用之前的正文，得到 %q", got)
+	}
+}
