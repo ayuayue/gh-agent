@@ -34,7 +34,7 @@ func (s *draftStore) saveLocked() error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-		if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)
@@ -98,6 +98,63 @@ func (s *draftStore) Pending() int {
 		}
 	}
 	return n
+}
+
+// itemsCache 是条目列表的磁盘缓存：重启后先拿它顶上，避免第一次打开一片空白。
+type itemsCache struct {
+	path  string
+	mu    sync.Mutex
+	items []Item
+	at    time.Time
+}
+
+func loadItemsCache(path string) *itemsCache {
+	c := &itemsCache{path: path}
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		var payload struct {
+			Items []Item `json:"items"`
+			At    string `json:"at"`
+		}
+		if json.Unmarshal(raw, &payload) == nil && len(payload.Items) > 0 {
+			c.items = payload.Items
+			if t, err := time.Parse(time.RFC3339, payload.At); err == nil {
+				c.at = t
+			}
+		}
+	}
+	return c
+}
+
+// save 原子写缓存；失败静默（缓存丢了只是下次慢一点）。
+func (c *itemsCache) save(items []Item, at time.Time) {
+	c.mu.Lock()
+	c.items = items
+	c.at = at
+	path := c.path
+	c.mu.Unlock()
+
+	payload := struct {
+		Items []Item `json:"items"`
+		At    string `json:"at"`
+	}{Items: items, At: at.UTC().Format(time.RFC3339)}
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, append(raw, '\n'), 0o644) == nil {
+		_ = os.Rename(tmp, path)
+	}
+}
+
+// get 返回缓存副本和写入时间。
+func (c *itemsCache) get() ([]Item, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]Item, len(c.items))
+	copy(out, c.items)
+	return out, c.at
 }
 
 // logBuffer 是内存日志环形缓冲，不落盘。

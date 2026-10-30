@@ -183,7 +183,15 @@ export default function Items({
 
         <span className="spacer" />
         <span className="items-meta">
-          {snapshot.loading ? "刷新中…" : snapshot.fetchedAt ? "更新于 " + snapshot.fetchedAt : "还没拉过"}
+          {snapshot.loading
+            ? "刷新中…"
+            : snapshot.stale
+              ? snapshot.fetchedAt
+                ? "显示缓存 " + snapshot.fetchedAt + "，正在更新…"
+                : "正在加载…"
+              : snapshot.fetchedAt
+                ? "更新于 " + snapshot.fetchedAt
+                : "还没拉过"}
         </span>
         <button className="ghost" onClick={onRefresh} disabled={snapshot.loading}>
           <RefreshIcon size={14} />

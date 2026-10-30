@@ -150,6 +150,7 @@ func (s *Service) reviewIssue(ctx context.Context, cfg config.Config, me, repo s
 	}
 	EventDraft.Broadcast(draft)
 	s.logf("审查完成，已进待审：%s#%d", repo, issue.Number)
+	s.notifyPending()
 	EventStatus.Broadcast(s.Status())
 	s.refreshItemsIfWanted()
 	return draft, nil

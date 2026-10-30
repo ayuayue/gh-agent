@@ -143,6 +143,11 @@ export interface ItemsSnapshot {
   loading: boolean;
   error?: string;
   fetchedAt?: string;
+  /**
+   * Stale 表示这份数据来自磁盘缓存，后台正在刷新——界面照常渲染，
+   * 刷完会再推一版新的。
+   */
+  stale?: boolean;
 }
 
 /** LogLine 是一行运行日志。 */
@@ -261,8 +266,8 @@ export const Service = {
     return call("Service.Redraft", id, agentID);
   },
   /**
-   * RefreshItems 在后台重新拉一遍条目列表，立刻返回「加载中」的快照，
-   * 拉完通过 EventItems 推一版完整的。
+   * RefreshItems 在后台重新拉一遍条目列表。
+   * 旧数据还在就继续显示（不空白），拉完通过 EventItems 推一版新的整体替换。
    */
   refreshItems(): Promise<ItemsSnapshot> {
     return call("Service.RefreshItems");

@@ -90,8 +90,8 @@ func (s *Service) Items() ItemsSnapshot {
 	return s.itemsSnapshotLocked()
 }
 
-// RefreshItems 在后台重新拉一遍条目列表，立刻返回「加载中」的快照，
-// 拉完通过 EventItems 推一版完整的。
+// RefreshItems 在后台重新拉一遍条目列表。
+// 旧数据还在就继续显示（不空白），拉完通过 EventItems 推一版新的整体替换。
 func (s *Service) RefreshItems() ItemsSnapshot {
 	s.mu.Lock()
 	if s.itemsLoading {
@@ -100,12 +100,19 @@ func (s *Service) RefreshItems() ItemsSnapshot {
 		return st
 	}
 	cfg := s.cfg
+	hasOld := len(s.items) > 0
 	s.itemsWanted = true
 	s.itemsLoading = true
-	s.itemsErr = ""
 	st := s.itemsSnapshotLocked()
 	s.mu.Unlock()
 
+	// 有旧数据时不清错误、不显示「加载中」——界面保持原样，刷完直接换新。
+	if !hasOld {
+		s.mu.Lock()
+		s.itemsErr = ""
+		st = s.itemsSnapshotLocked()
+		s.mu.Unlock()
+	}
 	EventItems.Broadcast(st)
 	go s.loadItems(cfg)
 	return st
@@ -124,12 +131,12 @@ func (s *Service) refreshItemsIfWanted() {
 
 func (s *Service) loadItems(cfg config.Config) {
 	if len(cfg.Repos) == 0 {
-		s.finishItems(nil, errors.New("配置里 repos 为空：先在设置里填一个 owner/name"))
+		s.finishItems(nil, errors.New("配置里 repos 为空：先在设置里填一个 owner/name"), false)
 		return
 	}
 	token, err := bootstrap.ResolveToken()
 	if err != nil {
-		s.finishItems(nil, err)
+		s.finishItems(nil, err, false)
 		return
 	}
 	client := ghapi.New(token)
@@ -138,12 +145,17 @@ func (s *Service) loadItems(cfg config.Config) {
 
 	s.mu.Lock()
 	me := s.me
+	prev := append([]Item(nil), s.items...) // 增量合并的底
 	s.mu.Unlock()
 	if me == "" {
 		// 启动时 token 可能还没就绪；这里补一次，免得「已回复」判断全落空。
 		if login, err := client.CurrentLogin(ctx); err == nil {
 			me = login
 		}
+	}
+	prevIndex := make(map[string]Item, len(prev))
+	for _, item := range prev {
+		prevIndex[item.ID] = item
 	}
 
 	var (
@@ -164,7 +176,18 @@ func (s *Service) loadItems(cfg config.Config) {
 		threads := 0 // 每个仓库各有一份预算，别让第一个仓库把额度吃光
 		for _, issue := range issues {
 			item := s.newItem(repo, issue)
-			if issue.Comments > 0 && threads < itemThreadLimit {
+			// 评论没变多就复用上一次拉的回复，不打那次请求：
+			// 大多数刷新里绝大多数条目都是没动的。
+			if old, ok := prevIndex[item.ID]; ok && old.Comments == item.Comments {
+				merged := item
+				merged.Replies = old.Replies
+				merged.Replied = old.Replied
+				merged.RepliedAt = old.RepliedAt
+				merged.Committed = old.Committed
+				merged.Commit = old.Commit
+				merged.Branch = old.Branch
+				item = merged
+			} else if issue.Comments > 0 && threads < itemThreadLimit {
 				threads++
 				comments, err := client.ListIssueComments(ctx, repo, issue.Number)
 				if err != nil {
@@ -184,7 +207,7 @@ func (s *Service) loadItems(cfg config.Config) {
 		}
 		return items[i].UpdatedAt > items[j].UpdatedAt
 	})
-	s.finishItems(items, firstErr)
+	s.finishItems(items, firstErr, true)
 }
 
 func (s *Service) newItem(repo string, issue ghapi.Issue) Item {
@@ -349,7 +372,9 @@ func (s *Service) markItemIgnored(repo string, number int, note string, ignored 
 	return st
 }
 
-func (s *Service) finishItems(items []Item, err error) {
+// finishItems 收尾：有新列表就整体替换并落盘缓存；拉取失败时保留旧列表，
+// 只把错误挂上——宁可看旧数据也不看空白。
+func (s *Service) finishItems(items []Item, err error, saveCache bool) {
 	s.mu.Lock()
 	if items != nil {
 		s.items = items
@@ -366,6 +391,9 @@ func (s *Service) finishItems(items []Item, err error) {
 	if err != nil {
 		s.logf("条目列表刷新失败：%v", err)
 	}
+	if saveCache && items != nil && err == nil {
+		s.itemsCache.save(st.Items, s.itemsAt)
+	}
 	EventItems.Broadcast(st)
 }
 
@@ -375,6 +403,10 @@ func (s *Service) itemsSnapshotLocked() ItemsSnapshot {
 	st := ItemsSnapshot{Items: items, Loading: s.itemsLoading, Error: s.itemsErr}
 	if !s.itemsAt.IsZero() {
 		st.FetchedAt = s.itemsAt.Format("15:04:05")
+	}
+	// 列表来自磁盘缓存且还没刷成功过 → 标记为旧数据。
+	if _, cacheAt := s.itemsCache.get(); !cacheAt.IsZero() && s.itemsAt.Equal(cacheAt) {
+		st.Stale = true
 	}
 	return st
 }

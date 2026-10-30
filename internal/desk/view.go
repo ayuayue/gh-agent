@@ -130,6 +130,9 @@ type ItemsSnapshot struct {
 	Loading   bool   `json:"loading"`
 	Error     string `json:"error,omitempty"`
 	FetchedAt string `json:"fetchedAt,omitempty"`
+	// Stale 表示这份数据来自磁盘缓存，后台正在刷新——界面照常渲染，
+	// 刷完会再推一版新的。
+	Stale bool `json:"stale,omitempty"`
 }
 
 // PathCheck 是本地目录的检查结果。
@@ -160,6 +163,9 @@ type AgentProbe struct {
 	Detail string      `json:"detail,omitempty"`
 	Info   acp.Details `json:"info"`
 }
+
+// Notifier 弹系统通知；生产实现在 main 里，测试里可以换成空实现。
+type Notifier func(title, body string)
 
 // LogLine 是一行运行日志。
 type LogLine struct {

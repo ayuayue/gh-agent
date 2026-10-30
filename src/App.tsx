@@ -108,6 +108,15 @@ export default function App() {
       ),
       events.log.on((l) => setLogs((prev) => [...prev, l].slice(-500))),
       events.items.on((s) => setItemsSnapshot(s)),
+      // 应用启动后预刷一次条目缓存：第一次打开条目页就有新数据可看，
+      // 而不是等打开页签才开始拉。
+      events.status.on(() => {
+        Service.items()
+          .then((snap) => {
+            if (snap.items.length === 0) void Service.refreshItems();
+          })
+          .catch(() => {});
+      }),
     ];
     return () => offs.forEach((off) => off());
   }, []);

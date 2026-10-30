@@ -53,9 +53,13 @@ type Service struct {
 	taskCancel map[string]context.CancelFunc
 	// probes 缓存 agent 参数探测结果（进程内）。
 	probes map[string]AgentProbe
+	// Notify 弹系统通知；nil 就不弹（测试 / 无通知环境）。窗口可见时不弹。
+	Notify Notifier
 
 	// 条目列表的缓存：按需刷新，不跟着每轮轮询跑。
+	// itemsCache 是磁盘缓存（重启后先拿它顶上）；items 是当前生效的列表。
 	items        []Item
+	itemsCache   *itemsCache
 	itemsLoading bool
 	itemsErr     string
 	itemsAt      time.Time
@@ -83,12 +87,18 @@ func New(cfgPath string) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{
-		cfgPath:   path,
-		statePath: statePath,
-		cfg:       cfg,
-		state:     state.Load(statePath),
-		drafts:    loadDrafts(filepath.Join(dir, "drafts.json")),
-		logs:      newLogBuffer(logLimit),
+		cfgPath:    path,
+		statePath:  statePath,
+		cfg:        cfg,
+		state:      state.Load(statePath),
+		drafts:     loadDrafts(filepath.Join(dir, "drafts.json")),
+		itemsCache: loadItemsCache(filepath.Join(dir, "items.json")),
+		logs:       newLogBuffer(logLimit),
+	}
+	// 重启后先用磁盘缓存顶上：第一次打开条目页不至于一片空白。
+	if cached, at := s.itemsCache.get(); len(cached) > 0 {
+		s.items = cached
+		s.itemsAt = at
 	}
 	// 身份解析失败不阻断启动：界面里会显示原因，用户改完 token 再点开始。
 	if token, err := bootstrap.ResolveToken(); err == nil {
@@ -612,6 +622,26 @@ func (s *Service) loop(ctx context.Context, r *agent.Runner, interval time.Durat
 }
 
 // enqueue 是 Runner 的 OnDraft 回调：草稿进待审队列。
+// notifyPending 在有待审草稿时弹一条系统通知。
+func (s *Service) notifyPending() {
+	if s.Notify == nil {
+		return
+	}
+	n := s.drafts.Pending()
+	if n == 0 {
+		return
+	}
+	title := "GH Agent"
+	body := "有 1 条待审的回复"
+	if n > 1 {
+		body = fmt.Sprintf("有 %d 条待审的回复", n)
+	}
+	if list := s.drafts.List(); len(list) > 0 {
+		body += "：" + list[0].Repo + "#" + strconv.Itoa(list[0].Number) + " " + list[0].Title
+	}
+	s.Notify(title, body)
+}
+
 func (s *Service) enqueue(in agent.DraftInput) error {
 	issue, comment := in.Issue, in.Comment
 	d := Draft{
@@ -636,6 +666,7 @@ func (s *Service) enqueue(in agent.DraftInput) error {
 	}
 	EventDraft.Broadcast(d)
 	s.logf("待审 %s#%d（%s），来自 %s", in.Repo, issue.Number, d.Author, d.Agent)
+	s.notifyPending()
 	s.mu.Lock()
 	st := s.statusLocked()
 	s.mu.Unlock()

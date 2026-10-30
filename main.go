@@ -45,15 +45,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// 待审草稿进来时弹系统通知；点通知把窗口拉到前面。
+	svc.Notify = func(title, body string) {
+		n := mygo.NewNotification(mygo.NotificationOptions{Title: title, Body: body, Group: "pending"})
+		_ = n.Show()
+	}
 	mygo.Bind(svc)
 
 	app.WhenReady(func() {
+		// 菜单留着（快捷键靠它），但工具栏默认藏起来：按 Alt/F10 才出现。
 		app.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
 			{Role: mygo.RoleAppMenu},
 			{Role: mygo.RoleEditMenu},
 			{Role: mygo.RoleViewMenu},
 			{Role: mygo.RoleWindowMenu},
 		}))
+
+		// 待审草稿来了弹系统通知：点通知回到窗口。
+		app.OnNotificationClick(func(id string) { showWindow() })
 
 		tray, err := mygo.NewTray(mygo.TrayOptions{
 			ID:      "main",
