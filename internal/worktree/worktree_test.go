@@ -110,3 +110,71 @@ func TestCaptureNonRepo(t *testing.T) {
 		t.Error("不是 git 仓库时 Repo 应为 false")
 	}
 }
+
+func TestCommitToBranchLeavesUserWorkAlone(t *testing.T) {
+	dir := setupRepo(t)
+
+	// 用户自己的未提交改动（跟这次提交无关）
+	if err := os.WriteFile(filepath.Join(dir, "local.txt"), []byte("user wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// agent 改的文件
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("agent change"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	before := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+
+	sha, err := worktree.CommitToBranch(dir, "gh-agent/issue-447", "test commit", []string{"a.txt"})
+	if err != nil {
+		t.Fatalf("CommitToBranch: %v", err)
+	}
+	if len(sha) != 40 {
+		t.Errorf("应返回完整 sha，得到 %q", sha)
+	}
+
+	// 当前分支不能变
+	if after := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); after != before {
+		t.Errorf("当前分支被改动了：%s -> %s", before, after)
+	}
+
+	// 用户的脏工作区要原封不动
+	if status := gitOut(t, dir, "status", "--porcelain"); !strings.Contains(status, "local.txt") {
+		t.Errorf("用户未提交的文件应还在，status=%q", status)
+	}
+	if body, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(body) != "agent change" {
+		t.Errorf("工作区里 agent 的改动应保留，得到 %q err=%v", body, err)
+	}
+
+	// 新分支上只有这次改动的文件
+	if got := gitOut(t, dir, "show", "gh-agent/issue-447:a.txt"); got != "agent change" {
+		t.Errorf("分支上的 a.txt 应为 agent 的内容，得到 %q", got)
+	}
+	if _, err := exec.Command("git", "-C", dir, "cat-file", "-e", "gh-agent/issue-447:local.txt").CombinedOutput(); err == nil {
+		t.Error("用户自己的 local.txt 不该被卷进这次提交")
+	}
+
+	// 临时 worktree 要清理掉
+	if list := gitOut(t, dir, "worktree", "list"); strings.Count(list, "\n") > 2 {
+		t.Errorf("临时 worktree 没清理干净：%s", list)
+	}
+}
+
+func TestCommitToBranchNoChanges(t *testing.T) {
+	dir := setupRepo(t)
+	if _, err := worktree.CommitToBranch(dir, "gh-agent/empty", "msg", []string{"a.txt"}); err == nil {
+		t.Error("没有实际改动时不该造空提交")
+	}
+}
+
+// gitOut 跑一条 git 命令并返回输出（去尾部空白）。
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}

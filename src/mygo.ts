@@ -54,6 +54,9 @@ export interface Draft {
   prompt?: string;
   /** Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。 */
   changes?: Result;
+  /** Branch / Commit 是批准时改动落到的分支和提交，没有改动时为空。 */
+  branch?: string;
+  commit?: string;
   createdAt: string;
   status: string;
   error?: string;
@@ -97,7 +100,11 @@ export const Service = {
   agents(): Promise<AgentInfo[]> {
     return call("Service.Agents");
   },
-  /** Approve 把一条待审草稿发到 GitHub。 */
+  /**
+   * Approve 把一条待审草稿发到 GitHub。
+   * 如果这条草稿带着代码改动，先把改动提交到一个新分支，再发评论：
+   * 评论里说"改了"，就得真有东西可看。
+   */
   approve(id: string): Promise<Draft> {
     return call("Service.Approve", id);
   },

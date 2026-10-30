@@ -712,3 +712,27 @@ input:focus {
 .diff-line.del { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .diff-line.hunk { color: var(--accent); background: var(--accent-weak); }
 .diff-line.meta { color: var(--text-3); }
+
+/* ---------- 提交提示 ---------- */
+.commit-hint {
+  margin: 8px 16px 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.commit-hint code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-2);
+}
+
+.tag.branch {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  background: var(--accent-weak);
+  color: var(--accent);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

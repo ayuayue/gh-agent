@@ -165,7 +165,15 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
               </button>
             )}
 
-            {!isEditing && d.changes && <Changes changes={d.changes} />}
+            {!isEditing && d.changes && (
+              <>
+                <Changes changes={d.changes} />
+                <p className="commit-hint">
+                  批准时会把这几处改动提交到分支{" "}
+                  <code>gh-agent/issue-{d.number}</code>（只提交到本地，不推送）
+                </p>
+              </>
+            )}
 
             <div className="draft-foot">
               {isEditing ? (
@@ -240,6 +248,7 @@ export default function Drafts({ drafts, onChanged }: { drafts: Draft[]; onChang
                 <span className="grow" title={d.error || d.title}>
                   {d.error || d.title}
                 </span>
+                {d.branch && <span className="tag branch">{d.branch}</span>}
                 <time>{fmtTime(d.createdAt)}</time>
               </div>
             ))}

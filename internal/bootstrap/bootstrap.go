@@ -143,7 +143,7 @@ func ResponderFor(cfg config.Config, agentID string, logf func(string, ...any)) 
 	}
 	return &acp.Responder{
 		AgentID: kind,
-		Workdir: func(repo string) string { return agentWorkdir(cfg, repo) },
+		Workdir: func(repo string) string { return RepoWorkdir(cfg, repo) },
 		Timeout: agentTimeout,
 		Logf:    logf,
 	}, nil
@@ -159,9 +159,9 @@ func Instructions(cfg config.Config) string {
 	return DefaultInstructions
 }
 
-// agentWorkdir 返回本地 agent 的工作目录：优先用 repo_paths 里配的本地克隆，
+// RepoWorkdir 返回本地 agent 的工作目录：优先用 repo_paths 里配的本地克隆，
 // 否则在配置目录下开一个空的 work/<repo>，保证 agent 有个合法的 cwd。
-func agentWorkdir(cfg config.Config, repo string) string {
+func RepoWorkdir(cfg config.Config, repo string) string {
 	if path := strings.TrimSpace(cfg.RepoPaths[repo]); path != "" {
 		return path
 	}

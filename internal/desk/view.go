@@ -53,7 +53,10 @@ type Draft struct {
 	// Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。
 	Prompt string `json:"prompt,omitempty"`
 	// Changes 是这一轮 agent 对工作区的改动，只有本地 agent 才会有。
-	Changes   *worktree.Result `json:"changes,omitempty"`
+	Changes *worktree.Result `json:"changes,omitempty"`
+	// Branch / Commit 是批准时改动落到的分支和提交，没有改动时为空。
+	Branch string `json:"branch,omitempty"`
+	Commit string `json:"commit,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`

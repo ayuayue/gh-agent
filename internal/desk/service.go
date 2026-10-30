@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/ayuayue/gh-agent/internal/bootstrap"
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
+	"github.com/ayuayue/gh-agent/internal/worktree"
 	"github.com/egoist/mygo"
 )
 
@@ -177,6 +179,8 @@ func (s *Service) Drafts() []Draft {
 }
 
 // Approve 把一条待审草稿发到 GitHub。
+// 如果这条草稿带着代码改动，先把改动提交到一个新分支，再发评论：
+// 评论里说"改了"，就得真有东西可看。
 func (s *Service) Approve(id string) (Draft, error) {
 	d, ok := s.drafts.Get(id)
 	if !ok {
@@ -185,6 +189,27 @@ func (s *Service) Approve(id string) (Draft, error) {
 	if d.Status != "pending" {
 		return d, fmt.Errorf("这条草稿的状态是 %s，不能发送", d.Status)
 	}
+
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	branch, commit := "", ""
+	if d.Changes != nil && len(d.Changes.Files) > 0 {
+		var err error
+		branch, commit, err = commitDraft(cfg, d)
+		if err != nil {
+			out, _ := s.drafts.Update(id, func(x *Draft) {
+				x.Status = "failed"
+				x.Error = err.Error()
+			})
+			EventDraft.Broadcast(out)
+			s.logf("提交改动失败 %s#%d：%v", d.Repo, d.Number, err)
+			return out, err
+		}
+		s.logf("改动已提交到 %s（%s）", branch, commit[:8])
+	}
+
 	token, err := bootstrap.ResolveToken()
 	if err != nil {
 		return d, err
@@ -203,10 +228,50 @@ func (s *Service) Approve(id string) (Draft, error) {
 	out, _ := s.drafts.Update(id, func(x *Draft) {
 		x.Status = "posted"
 		x.Error = ""
+		x.Branch = branch
+		x.Commit = commit
 	})
 	EventDraft.Broadcast(out)
 	s.logf("已发送 %s#%d", d.Repo, d.Number)
 	return out, nil
+}
+
+// commitDraft 把草稿涉及的改动提交到一个新分支，返回分支名和提交 sha。
+func commitDraft(cfg config.Config, d Draft) (string, string, error) {
+	dir := bootstrap.RepoWorkdir(cfg, d.Repo)
+	if dir == "" {
+		return "", "", errors.New("找不到这个仓库的本地目录")
+	}
+	branch := nextBranchName(dir, "gh-agent/issue-"+strconv.Itoa(d.Number))
+	sha, err := worktree.CommitToBranch(dir, branch, commitMessage(d), d.Changes.Files)
+	if err != nil {
+		return "", "", err
+	}
+	return branch, sha, nil
+}
+
+// nextBranchName 撞名就加后缀：gh-agent/issue-447-2、-3…
+func nextBranchName(repo, base string) string {
+	if !worktree.BranchExists(repo, base) {
+		return base
+	}
+	for i := 2; i < 100; i++ {
+		name := base + "-" + strconv.Itoa(i)
+		if !worktree.BranchExists(repo, name) {
+			return name
+		}
+	}
+	return base + "-" + strconv.FormatInt(time.Now().Unix(), 10)
+}
+
+func commitMessage(d Draft) string {
+	head := "gh-agent: 回复 #" + strconv.Itoa(d.Number)
+	if d.Title != "" {
+		head += " " + d.Title
+	}
+	return head + "\n\n" +
+		"由 " + d.Agent + " 生成，经人工审阅后提交。\n" +
+		d.CommentURL + "\n"
 }
 
 // Reject 丢弃一条待审草稿，不会发到 GitHub。
