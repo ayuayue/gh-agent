@@ -1,7 +1,11 @@
 // Package agent 负责「哪些评论要处理、怎么组装 prompt、怎么跑一轮」。
 package agent
 
-import "github.com/ayuayue/gh-agent/internal/ghapi"
+import (
+	"strings"
+
+	"github.com/ayuayue/gh-agent/internal/ghapi"
+)
 
 // Filter 描述一次匹配需要用到的静态条件。
 type Filter struct {
@@ -32,6 +36,10 @@ func (f Filter) Match(comment ghapi.Comment) bool {
 	}
 	if !f.Allowed[comment.AuthorAssociation] {
 		return false
+	}
+	// 没配触发词就是"全接"：任何评论都处理。
+	if strings.TrimSpace(f.Trigger) == "" {
+		return true
 	}
 	return ContainsTrigger(comment.Body, f.Trigger)
 }

@@ -65,3 +65,21 @@ func TestMatchSkipsSelfBotAndStrangers(t *testing.T) {
 		t.Error("空正文不应命中")
 	}
 }
+
+// 触发词留空时，任何评论都该命中（其余规则照旧）。
+func TestMatchEmptyTriggerAcceptsEverything(t *testing.T) {
+	filter := Filter{Me: "me", Trigger: "", Allowed: allowedAll(), Seen: func(int64) bool { return false }}
+
+	if !filter.Match(comment(1, "friend", "OWNER", "随便说点什么")) {
+		t.Error("没配触发词时应命中任何正文")
+	}
+	if !filter.Match(comment(2, "friend", "MEMBER", "a")) {
+		t.Error("没配触发词时应命中任何正文")
+	}
+	if filter.Match(comment(3, "stranger", "NONE", "随便说点什么")) {
+		t.Error("非协作者仍然不该命中")
+	}
+	if filter.Match(comment(4, "me", "OWNER", "自己")) {
+		t.Error("自己的评论仍然不该命中")
+	}
+}

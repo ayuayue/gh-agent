@@ -278,9 +278,14 @@ export default function Settings({
             <input
               value={form.trigger}
               onChange={(e) => set("trigger", e.target.value)}
+              placeholder="留空 = 全部处理"
               spellCheck={false}
             />
-            <span className="hint">评论里出现它就处理</span>
+            <span className={form.trigger.trim() === "" ? "hint warn" : "hint"}>
+              {form.trigger.trim() === ""
+                ? "留空：任何 issue / PR 评论都会处理"
+                : "评论里出现这个词才处理"}
+            </span>
           </label>
 
           <label className="field">

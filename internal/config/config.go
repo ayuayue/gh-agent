@@ -69,7 +69,7 @@ func Default() Config {
 			MaxOutputTokens: 1200,
 			Temperature:     0.2,
 		},
-		Signature:        "*本条由本地 AI 助手自动生成，结论请以代码为准。*",
+		Signature:        "*本条由 agent 协助生成，结论请以代码为准。*",
 		InstructionsFile: "",
 		Agent:            "llm",
 		AgentPermission:  "bypass",
@@ -181,9 +181,7 @@ func (c *Config) Validate() error {
 	if c.Provider.MaxOutputTokens < 128 {
 		c.Provider.MaxOutputTokens = 128
 	}
-	if c.Trigger == "" {
-		c.Trigger = "@claude"
-	}
+	// trigger 允许为空：空表示任何 issue / PR 评论都处理，不强制回填。
 	if len(c.AllowedAssociations) == 0 {
 		c.AllowedAssociations = Default().AllowedAssociations
 	}

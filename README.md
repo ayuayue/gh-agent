@@ -128,7 +128,8 @@ Token 解析顺序：`GH_TOKEN` → `GITHUB_TOKEN` → `gh auth token`（复用�
 
 1. 作者不是自己（按 login）、不是 bot；
 2. `author_association` 在允许列表（默认 OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR）；
-3. 正文命中 `trigger`（默认 `@claude`，大小写不敏感）；
+3. 正文命中 `trigger`（默认 `@claude`，大小写不敏感）；**留空则任何评论都处理**——所有
+   issue / PR 的新评论、只要作者在上面那张白名单里，都会触发；
 4. 这条 comment id 没处理过（state 里记最近 1000 条）。
 
 ## 目录
