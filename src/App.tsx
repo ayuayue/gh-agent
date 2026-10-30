@@ -1,10 +1,32 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  ActivityIcon,
+  AlertIcon,
+  InboxIcon,
+  PauseIcon,
+  PlayIcon,
+  RefreshIcon,
+  SlidersIcon,
+  type IconProps,
+} from "./icons";
 import { events, Service, type ConfigDTO, type Draft, type LogLine, type StatusDTO } from "./mygo";
 import Drafts from "./views/Drafts";
 import Logs from "./views/Logs";
 import Settings from "./views/Settings";
 
 type Tab = "drafts" | "logs" | "settings";
+
+const TABS: { id: Tab; label: string; icon: (p: IconProps) => React.ReactElement }[] = [
+  { id: "drafts", label: "待审", icon: InboxIcon },
+  { id: "logs", label: "事件流", icon: ActivityIcon },
+  { id: "settings", label: "设置", icon: SlidersIcon },
+];
+
+const TITLES: Record<Tab, { title: string; hint: string }> = {
+  drafts: { title: "待审", hint: "模型出稿后停在这里，你点了批准才会发到 GitHub" },
+  logs: { title: "事件流", hint: "轮询、命中、出稿的实时记录" },
+  settings: { title: "设置", hint: "改动保存后立即生效，正在跑的话会用新配置重启轮询" },
+};
 
 export default function App() {
   const [status, setStatus] = useState<StatusDTO | null>(null);
@@ -71,49 +93,82 @@ export default function App() {
   };
 
   const pending = drafts.filter((d) => d.status === "pending").length;
+  const meta = TITLES[tab];
 
   return (
-    <div className="app">
-      <header className="bar">
+    <div className="shell">
+      <aside className="sidebar">
         <div className="brand">
-          <span className="dot" data-on={status?.running ? "1" : "0"} />
-          <strong>GH Agent</strong>
-          <span className="muted">{status?.running ? "轮询中" : "已停止"}</span>
+          <span className="brand-mark">G</span>
+          <span className="brand-name">GH Agent</span>
         </div>
-        <div className="meta">
-          <span className="muted">{config?.repos.join(", ") || "未配置仓库"}</span>
-          {status?.me && <span className="muted">· {status.me}</span>}
-          {status?.lastPoll && <span className="muted">· 上次 {status.lastPoll}</span>}
-          {status?.handled ? <span className="muted">· 累计 {status.handled}</span> : null}
+
+        <nav className="nav">
+          {TABS.map(({ id, label, icon: Icon }) => (
+            <button key={id} data-active={tab === id} onClick={() => setTab(id)}>
+              <Icon size={16} />
+              <span>{label}</span>
+              {id === "drafts" && pending > 0 && <span className="count">{pending}</span>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-foot">
+          <div className="status-line">
+            <span className="dot" data-on={status?.running ? "1" : "0"} />
+            <span>{status?.running ? "轮询中" : "已停止"}</span>
+          </div>
+          <span className="ellipsis" title={config?.repos.join(", ")}>
+            {config?.repos.join(", ") || "未配置仓库"}
+          </span>
+          <span className="ellipsis">
+            {status?.lastPoll ? "上次 " + status.lastPoll : "还没跑过"}
+          </span>
         </div>
-        <button className="primary" onClick={toggle} disabled={busy}>
-          {status?.running ? "停止" : "开始"}
-        </button>
-      </header>
+      </aside>
 
-      {(error || status?.lastError) && (
-        <div className="alert">{error || status?.lastError}</div>
-      )}
+      <section className="main">
+        <header className="topbar">
+          <div>
+            <h1>{meta.title}</h1>
+            <p>{meta.hint}</p>
+          </div>
+          <div className="actions">
+            <button className="ghost icon-only" onClick={() => void refresh()} title="刷新">
+              <RefreshIcon size={16} />
+            </button>
+            <button
+              className={status?.running ? "danger" : "primary"}
+              onClick={toggle}
+              disabled={busy}
+            >
+              {status?.running ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+              {status?.running ? "停止" : "开始轮询"}
+            </button>
+          </div>
+        </header>
 
-      <nav className="tabs">
-        <button data-active={tab === "drafts"} onClick={() => setTab("drafts")}>
-          待审 {pending > 0 && <em>{pending}</em>}
-        </button>
-        <button data-active={tab === "logs"} onClick={() => setTab("logs")}>
-          事件流
-        </button>
-        <button data-active={tab === "settings"} onClick={() => setTab("settings")}>
-          设置
-        </button>
-      </nav>
-
-      <main className="content">
-        {tab === "drafts" && <Drafts drafts={drafts} onChanged={refresh} />}
-        {tab === "logs" && <Logs lines={logs} />}
-        {tab === "settings" && config && (
-          <Settings config={config} onSaved={(c) => { setConfig(c); void refresh(); }} />
+        {(error || status?.lastError) && (
+          <div className="banner error">
+            <AlertIcon size={15} />
+            <span>{error || status?.lastError}</span>
+          </div>
         )}
-      </main>
+
+        <div className="scroll">
+          {tab === "drafts" && <Drafts drafts={drafts} onChanged={refresh} />}
+          {tab === "logs" && <Logs lines={logs} />}
+          {tab === "settings" && config && (
+            <Settings
+              config={config}
+              onSaved={(c) => {
+                setConfig(c);
+                void refresh();
+              }}
+            />
+          )}
+        </div>
+      </section>
     </div>
   );
 }

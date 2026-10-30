@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ActivityIcon } from "../icons";
 import type { LogLine } from "../mygo";
 
 export default function Logs({ lines }: { lines: LogLine[] }) {
@@ -9,15 +10,21 @@ export default function Logs({ lines }: { lines: LogLine[] }) {
   }, [lines.length]);
 
   if (lines.length === 0) {
-    return <p className="empty">还没有日志。点「开始」跑一轮试试。</p>;
+    return (
+      <div className="empty">
+        <ActivityIcon size={34} />
+        <strong>还没有记录</strong>
+        <p>点右上角「开始轮询」跑一轮，这里会实时打印命中、出稿和发送的结果。</p>
+      </div>
+    );
   }
 
   return (
     <div className="logs">
       {lines.map((l, i) => (
-        <div key={i} className="logline">
-          <span className="muted">{l.at}</span>
-          <span>{l.text}</span>
+        <div key={i} className={l.level === "error" ? "logrow err" : "logrow"}>
+          <time>{l.at}</time>
+          <span className="msg">{l.text}</span>
         </div>
       ))}
       <div ref={end} />

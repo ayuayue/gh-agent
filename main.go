@@ -98,7 +98,7 @@ func showWindow() {
 		Height:          740,
 		MinWidth:        760,
 		MinHeight:       520,
-		BackgroundColor: "light-dark(#f6f7f9, #0f1115)", // 页面 --bg
+		BackgroundColor: "light-dark(#f5f6f8, #0b0d11)", // 页面 --bg
 		StateKey:        "main",                          // 记住上次的位置和大小
 		URL:             "/",                             // dev 走 devUrl，打包后走 frontendDist
 	})
