@@ -27,6 +27,33 @@ npm run build        # 打包到 build/
 
 > 桌面壳永远走人工审核，不会自己发帖。要全自动，用 CLI 的 `--live`。
 
+## 出稿方：模型端点 还是 本地 agent
+
+配置里的 `agent` 决定谁来写这条回复：
+
+| 值 | 怎么跑 | 能看到代码 | 单条耗时 |
+|---|---|---|---|
+| `llm`（默认） | 打 `provider.base_url` 的 OpenAI 兼容端点 | 否，只看 prompt 里的上下文 | 数秒 |
+| `codebuddy` | `codebuddy --acp --acp-transport stdio` | 是 | 十几秒到一分钟 |
+| `pi` | `npx -y pi-acp` | 是 | 类似 |
+
+本地 agent 走 **ACP（Agent Client Protocol）**，跟编辑器接 agent 是同一套协议。
+ACP 官方只提供 Kotlin / Python / Rust / TypeScript 的 SDK，没有 Go 版，
+所以 `internal/acp` 是按官方 v1 schema 自己实现的客户端（JSON-RPC over stdio，
+只用到 `initialize` / `session/new` / `session/prompt` / `session/update` 四个方法）。
+
+agent 要读代码，得先告诉它仓库在本地哪：
+
+```json
+"agent": "codebuddy",
+"repo_paths": { "ayuayue/PiDeck": "D:/project/pideck" }
+```
+
+留空的话会在配置目录下开一个空的 `work/<repo>`，agent 只能靠 prompt 里的上下文回答。
+
+界面上每条草稿都能「换 agent 重做」：同一个 prompt 换一个 agent 再出一遍，方便对比；
+也可以「编辑」就地改正文再发。
+
 ## CLI
 
 ```bash

@@ -18,6 +18,10 @@ type ConfigDTO struct {
 	TimeoutSeconds      int      `json:"timeoutSeconds"`
 	MaxOutputTokens     int      `json:"maxOutputTokens"`
 	Temperature         float64  `json:"temperature"`
+	// Agent 是默认出稿方：llm / codebuddy / pi。
+	Agent string `json:"agent"`
+	// RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。
+	RepoPaths map[string]string `json:"repoPaths"`
 }
 
 // StatusDTO 是轮询的当前状态。
@@ -41,9 +45,25 @@ type Draft struct {
 	CommentURL string `json:"commentUrl"`
 	Author     string `json:"author"`
 	Body       string `json:"body"`
-	CreatedAt  string `json:"createdAt"`
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
+	// Agent 是产出这条草稿的 agent 名字。
+	Agent string `json:"agent"`
+	// Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。
+	Prompt    string `json:"prompt,omitempty"`
+	CreatedAt string `json:"createdAt"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
+}
+
+// AgentInfo 是一个可选的出稿方，给界面上的下拉框用。
+type AgentInfo struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Desc      string `json:"desc"`
+	Available bool   `json:"available"`
+	// Detail 说明为什么不可用。
+	Detail string `json:"detail"`
+	// Current 表示它是当前配置里的默认出稿方。
+	Current bool `json:"current"`
 }
 
 // LogLine 是一行运行日志。

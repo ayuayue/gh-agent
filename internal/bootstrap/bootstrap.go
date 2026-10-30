@@ -12,12 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ayuayue/gh-agent/internal/acp"
 	"github.com/ayuayue/gh-agent/internal/agent"
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
 	"github.com/ayuayue/gh-agent/internal/llm"
 	"github.com/ayuayue/gh-agent/internal/state"
 )
+
+// agentTimeout 是本地 agent 单轮出稿的上限。读代码 + 跑命令比打模型慢得多。
+const agentTimeout = 8 * time.Minute
 
 // DefaultInstructions 是没有配置 instructions_file 时用的系统提示。
 const DefaultInstructions = `你在一个软件仓库里回答 issue / PR 评论。
@@ -38,7 +42,7 @@ type Options struct {
 	// Verbose 打开后额外打印配置目录等信息。
 	Verbose bool
 	// OnDraft 非空时，出稿进待审队列而不是直接发帖。
-	OnDraft func(repo string, issue ghapi.Issue, comment ghapi.Comment, body string) error
+	OnDraft agent.OnDraftFunc
 }
 
 // NewRunner 装配一个 Runner：解析 token、校验身份、加载状态与指令。
@@ -53,22 +57,10 @@ func NewRunner(cfg config.Config, opts Options) (*agent.Runner, error) {
 		return nil, fmt.Errorf("校验 GitHub token 失败：%w", err)
 	}
 
-	apiKey := ""
-	if cfg.Provider.APIKeyEnv != "" {
-		apiKey = os.Getenv(cfg.Provider.APIKeyEnv)
+	responder, err := buildResponder(cfg, opts)
+	if err != nil {
+		return nil, err
 	}
-	if apiKey == "" {
-		apiKey = cfg.Provider.APIKey
-	}
-
-	llmClient := llm.New(
-		cfg.Provider.BaseURL,
-		cfg.Provider.Model,
-		apiKey,
-		time.Duration(cfg.Provider.TimeoutSeconds)*time.Second,
-		cfg.Provider.MaxOutputTokens,
-		cfg.Provider.Temperature,
-	)
 
 	dir, err := config.Dir()
 	if err != nil {
@@ -77,16 +69,12 @@ func NewRunner(cfg config.Config, opts Options) (*agent.Runner, error) {
 	statePath := filepath.Join(dir, "state.json")
 	st := state.Load(statePath)
 
-	instructions := DefaultInstructions
 	if cfg.InstructionsFile != "" {
-		raw, err := os.ReadFile(cfg.InstructionsFile)
-		if err != nil {
+		if _, err := os.ReadFile(cfg.InstructionsFile); err != nil {
 			return nil, fmt.Errorf("读取 instructions_file 失败：%w", err)
 		}
-		if strings.TrimSpace(string(raw)) != "" {
-			instructions = string(raw)
-		}
 	}
+	instructions := Instructions(cfg)
 
 	if opts.Verbose && opts.Logf != nil {
 		opts.Logf("配置目录 %s", dir)
@@ -97,7 +85,7 @@ func NewRunner(cfg config.Config, opts Options) (*agent.Runner, error) {
 		Me:           me,
 		Live:         !cfg.DryRun,
 		GH:           client,
-		LLM:          llmClient,
+		Responder:    responder,
 		State:        st,
 		StatePath:    statePath,
 		Logf:         opts.Logf,
@@ -120,3 +108,81 @@ func ResolveToken() (string, error) {
 	}
 	return "", errors.New("没有 GitHub token：设置 GH_TOKEN，或先执行 gh auth login")
 }
+
+// buildResponder 按配置挑出稿方式。
+func buildResponder(cfg config.Config, opts Options) (agent.Responder, error) {
+	return ResponderFor(cfg, cfg.Agent, opts.Logf)
+}
+
+// ResponderFor 按 agent id 造一个出稿器；agentID 为空时用配置里的默认值。
+// 界面里"换一个 agent 重做"也走这里。
+func ResponderFor(cfg config.Config, agentID string, logf func(string, ...any)) (agent.Responder, error) {
+	kind := strings.TrimSpace(agentID)
+	if kind == "" {
+		kind = strings.TrimSpace(cfg.Agent)
+	}
+	if kind == "" || kind == "llm" {
+		apiKey := ""
+		if cfg.Provider.APIKeyEnv != "" {
+			apiKey = os.Getenv(cfg.Provider.APIKeyEnv)
+		}
+		if apiKey == "" {
+			apiKey = cfg.Provider.APIKey
+		}
+		return llmResponder{client: llm.New(
+			cfg.Provider.BaseURL,
+			cfg.Provider.Model,
+			apiKey,
+			time.Duration(cfg.Provider.TimeoutSeconds)*time.Second,
+			cfg.Provider.MaxOutputTokens,
+			cfg.Provider.Temperature,
+		)}, nil
+	}
+	if _, ok := acp.Lookup(kind); !ok {
+		return nil, fmt.Errorf("配置里的 agent %q 不认识，可选：llm、codebuddy、pi", kind)
+	}
+	return &acp.Responder{
+		AgentID: kind,
+		Workdir: func(repo string) string { return agentWorkdir(cfg, repo) },
+		Timeout: agentTimeout,
+		Logf:    logf,
+	}, nil
+}
+
+// Instructions 返回系统提示：配置了 instructions_file 就读它，否则用内置的。
+func Instructions(cfg config.Config) string {
+	if cfg.InstructionsFile != "" {
+		if raw, err := os.ReadFile(cfg.InstructionsFile); err == nil && strings.TrimSpace(string(raw)) != "" {
+			return string(raw)
+		}
+	}
+	return DefaultInstructions
+}
+
+// agentWorkdir 返回本地 agent 的工作目录：优先用 repo_paths 里配的本地克隆，
+// 否则在配置目录下开一个空的 work/<repo>，保证 agent 有个合法的 cwd。
+func agentWorkdir(cfg config.Config, repo string) string {
+	if path := strings.TrimSpace(cfg.RepoPaths[repo]); path != "" {
+		return path
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	slug := strings.NewReplacer("/", "_", "\\", "_", ":", "_").Replace(repo)
+	work := filepath.Join(dir, "work", slug)
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		return ""
+	}
+	return work
+}
+
+// llmResponder 把 llm.Client 适配成 agent.Responder，
+// 这样 llm 包不用反向依赖 agent。
+type llmResponder struct{ client *llm.Client }
+
+func (r llmResponder) Respond(ctx context.Context, req agent.Request) (string, error) {
+	return r.client.Chat(ctx, req.System, req.User)
+}
+
+func (r llmResponder) Label() string { return r.client.Model }

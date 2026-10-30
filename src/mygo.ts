@@ -4,6 +4,18 @@ import { call, event } from "mygo-runtime";
 
 // ---- Types ----
 
+/** AgentInfo 是一个可选的出稿方，给界面上的下拉框用。 */
+export interface AgentInfo {
+  id: string;
+  name: string;
+  desc: string;
+  available: boolean;
+  /** Detail 说明为什么不可用。 */
+  detail: string;
+  /** Current 表示它是当前配置里的默认出稿方。 */
+  current: boolean;
+}
+
 /** ConfigDTO 是前端看到的配置。token 不在这里：它来自 GH_TOKEN 或 gh auth。 */
 export interface ConfigDTO {
   repos: string[];
@@ -20,6 +32,10 @@ export interface ConfigDTO {
   timeoutSeconds: number;
   maxOutputTokens: number;
   temperature: number;
+  /** Agent 是默认出稿方：llm / codebuddy / pi。 */
+  agent: string;
+  /** RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。 */
+  repoPaths: Record<string, string>;
 }
 
 /** Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed。 */
@@ -32,6 +48,10 @@ export interface Draft {
   commentUrl: string;
   author: string;
   body: string;
+  /** Agent 是产出这条草稿的 agent 名字。 */
+  agent: string;
+  /** Prompt 是当时喂给 agent 的正文，换 agent 重做时原样再用一次。 */
+  prompt?: string;
   createdAt: string;
   status: string;
   error?: string;
@@ -59,6 +79,10 @@ export interface StatusDTO {
 
 /** Service 是绑定给前端的服务：mygo.Bind(desk.New(...))。 */
 export const Service = {
+  /** Agents 列出可选的出稿方：模型端点 + 检测到的本地 agent。 */
+  agents(): Promise<AgentInfo[]> {
+    return call("Service.Agents");
+  },
   /** Approve 把一条待审草稿发到 GitHub。 */
   approve(id: string): Promise<Draft> {
     return call("Service.Approve", id);
@@ -79,6 +103,10 @@ export const Service = {
   openExternal(url: string): Promise<void> {
     return call("Service.OpenExternal", url);
   },
+  /** Redraft 用指定的 agent 把同一条评论重新出一遍稿，覆盖原来那条。 */
+  redraft(id: string, agentID: string): Promise<Draft> {
+    return call("Service.Redraft", id, agentID);
+  },
   /** Reject 丢弃一条待审草稿，不会发到 GitHub。 */
   reject(id: string): Promise<Draft> {
     return call("Service.Reject", id);
@@ -98,6 +126,10 @@ export const Service = {
   /** Stop 停止轮询（正在跑的那一轮会跑完）。 */
   stop(): Promise<StatusDTO> {
     return call("Service.Stop");
+  },
+  /** UpdateDraft 改一条待审草稿的正文（人工润色后再发）。 */
+  updateDraft(id: string, body: string): Promise<Draft> {
+    return call("Service.UpdateDraft", id, body);
   },
 } as const;
 

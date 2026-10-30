@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ayuayue/gh-agent/internal/acp"
 	"github.com/ayuayue/gh-agent/internal/agent"
 	"github.com/ayuayue/gh-agent/internal/bootstrap"
 	"github.com/ayuayue/gh-agent/internal/config"
@@ -222,6 +224,99 @@ func (s *Service) Reject(id string) (Draft, error) {
 	return out, nil
 }
 
+// Agents 列出可选的出稿方：模型端点 + 检测到的本地 agent。
+func (s *Service) Agents() []AgentInfo {
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	out := []AgentInfo{{
+		ID:        "llm",
+		Name:      "模型端点",
+		Desc:      cfg.Provider.Model + " @ " + cfg.Provider.BaseURL,
+		Available: strings.TrimSpace(cfg.Provider.BaseURL) != "" && strings.TrimSpace(cfg.Provider.Model) != "",
+		Detail:    "读不到代码，只能看 prompt 里的上下文",
+		Current:   cfg.Agent == "" || cfg.Agent == "llm",
+	}}
+	for _, info := range acp.Detect() {
+		entry := AgentInfo{
+			ID:        info.ID,
+			Name:      info.Name,
+			Desc:      info.Desc,
+			Available: info.Available,
+			Detail:    info.Detail,
+			Current:   cfg.Agent == info.ID,
+		}
+		if entry.Available {
+			entry.Detail = ""
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// Redraft 用指定的 agent 把同一条评论重新出一遍稿，覆盖原来那条。
+func (s *Service) Redraft(id, agentID string) (Draft, error) {
+	d, ok := s.drafts.Get(id)
+	if !ok {
+		return Draft{}, errors.New("草稿不存在")
+	}
+	if d.Status != "pending" {
+		return d, fmt.Errorf("这条草稿的状态是 %s，不能重做", d.Status)
+	}
+	if strings.TrimSpace(d.Prompt) == "" {
+		return d, errors.New("这条草稿没存下当时的 prompt，无法重做")
+	}
+
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	responder, err := bootstrap.ResponderFor(cfg, agentID, s.logf)
+	if err != nil {
+		return d, err
+	}
+	s.logf("用 %s 重做 %s#%d…", responder.Label(), d.Repo, d.Number)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	out, err := responder.Respond(ctx, agent.Request{Repo: d.Repo, System: bootstrap.Instructions(cfg), User: d.Prompt})
+	if err != nil {
+		return d, err
+	}
+	body := agent.Finalize(out, cfg.Signature)
+	if body == "" {
+		return d, errors.New("agent 返回了空正文")
+	}
+
+	updated, _ := s.drafts.Update(id, func(x *Draft) {
+		x.Body = body
+		x.Agent = responder.Label()
+		x.CreatedAt = time.Now().Format(time.RFC3339)
+		x.Error = ""
+	})
+	EventDraft.Broadcast(updated)
+	s.logf("%s 重做完成", responder.Label())
+	return updated, nil
+}
+
+// UpdateDraft 改一条待审草稿的正文（人工润色后再发）。
+func (s *Service) UpdateDraft(id, body string) (Draft, error) {
+	d, ok := s.drafts.Get(id)
+	if !ok {
+		return Draft{}, errors.New("草稿不存在")
+	}
+	if d.Status != "pending" {
+		return d, fmt.Errorf("这条草稿的状态是 %s，不能修改", d.Status)
+	}
+	if strings.TrimSpace(body) == "" {
+		return d, errors.New("正文不能为空")
+	}
+	out, _ := s.drafts.Update(id, func(x *Draft) { x.Body = body })
+	EventDraft.Broadcast(out)
+	return out, nil
+}
+
 // Logs 返回运行日志，旧的在前。
 func (s *Service) Logs() []LogLine {
 	return s.logs.List()
@@ -274,16 +369,19 @@ func (s *Service) loop(ctx context.Context, r *agent.Runner, interval time.Durat
 }
 
 // enqueue 是 Runner 的 OnDraft 回调：草稿进待审队列。
-func (s *Service) enqueue(repo string, issue ghapi.Issue, comment ghapi.Comment, body string) error {
+func (s *Service) enqueue(in agent.DraftInput) error {
+	issue, comment := in.Issue, in.Comment
 	d := Draft{
 		ID:         fmt.Sprintf("%d", comment.ID),
-		Repo:       repo,
+		Repo:       in.Repo,
 		Number:     issue.Number,
 		Title:      issue.Title,
 		IssueURL:   issue.HTMLURL,
 		CommentURL: comment.HTMLURL,
 		Author:     comment.User.Login,
-		Body:       body,
+		Body:       in.Body,
+		Agent:      in.Agent,
+		Prompt:     in.Prompt,
 		CreatedAt:  time.Now().Format(time.RFC3339),
 		Status:     "pending",
 	}
@@ -291,7 +389,7 @@ func (s *Service) enqueue(repo string, issue ghapi.Issue, comment ghapi.Comment,
 		return err
 	}
 	EventDraft.Broadcast(d)
-	s.logf("待审 %s#%d（%s）", repo, issue.Number, d.Author)
+	s.logf("待审 %s#%d（%s），来自 %s", in.Repo, issue.Number, d.Author, d.Agent)
 	s.mu.Lock()
 	st := s.statusLocked()
 	s.mu.Unlock()
@@ -336,6 +434,8 @@ func toDTO(c config.Config) ConfigDTO {
 		TimeoutSeconds:      c.Provider.TimeoutSeconds,
 		MaxOutputTokens:     c.Provider.MaxOutputTokens,
 		Temperature:         c.Provider.Temperature,
+		Agent:               c.Agent,
+		RepoPaths:           c.RepoPaths,
 	}
 }
 
@@ -354,5 +454,9 @@ func applyDTO(c config.Config, in ConfigDTO) config.Config {
 	c.Provider.TimeoutSeconds = in.TimeoutSeconds
 	c.Provider.MaxOutputTokens = in.MaxOutputTokens
 	c.Provider.Temperature = in.Temperature
+	c.Agent = in.Agent
+	if in.RepoPaths != nil {
+		c.RepoPaths = in.RepoPaths
+	}
 	return c
 }

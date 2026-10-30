@@ -7,7 +7,6 @@ import (
 
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
-	"github.com/ayuayue/gh-agent/internal/llm"
 	"github.com/ayuayue/gh-agent/internal/state"
 )
 
@@ -18,14 +17,28 @@ type Runner struct {
 	Me           string
 	Live         bool
 	GH           *ghapi.Client
-	LLM          *llm.Client
+	Responder    Responder
 	State        *state.State
 	StatePath    string
 	Logf         func(format string, args ...any)
 	// OnDraft 非空时，出稿不再直接发帖，而是交给它处置（进待审队列）。
 	// 它优先于 Live：人工审核模式下 Live 应保持 false。
-	OnDraft func(repo string, issue ghapi.Issue, comment ghapi.Comment, body string) error
+	OnDraft OnDraftFunc
 }
+
+// DraftInput 是 Runner 交给上层的一条待审草稿。
+// 带上 Prompt 是为了之后能用别的 agent 重做这一条。
+type DraftInput struct {
+	Repo    string
+	Issue   ghapi.Issue
+	Comment ghapi.Comment
+	Body    string
+	Agent   string
+	Prompt  string
+}
+
+// OnDraftFunc 接管出稿结果。
+type OnDraftFunc func(in DraftInput) error
 
 func (r *Runner) logf(format string, args ...any) {
 	if r.Logf != nil {
@@ -87,9 +100,9 @@ func (r *Runner) RunOnce(ctx context.Context) (int, error) {
 }
 
 func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, comment ghapi.Comment, thread []ghapi.Comment, repoState *state.Repo) error {
-	r.logf("  命中 #%d 的评论 %d（%s）", issue.Number, comment.ID, comment.User.Login)
+	r.logf("  命中 #%d 的评论 %d（%s），交给 %s 出稿", issue.Number, comment.ID, comment.User.Login, r.Responder.Label())
 	prompt := BuildPrompt(PromptInput{Repo: repo, Issue: issue, Comment: comment, Thread: thread, Instructions: r.Instructions})
-	reply, err := r.LLM.Chat(ctx, r.Instructions, prompt)
+	reply, err := r.Responder.Respond(ctx, Request{Repo: repo, System: r.Instructions, User: prompt})
 	if err != nil {
 		return err
 	}
@@ -99,7 +112,14 @@ func (r *Runner) handle(ctx context.Context, repo string, issue ghapi.Issue, com
 		return nil
 	}
 	if r.OnDraft != nil {
-		if err := r.OnDraft(repo, issue, comment, body); err != nil {
+		if err := r.OnDraft(DraftInput{
+			Repo:    repo,
+			Issue:   issue,
+			Comment: comment,
+			Body:    body,
+			Agent:   r.Responder.Label(),
+			Prompt:  prompt,
+		}); err != nil {
 			return err
 		}
 		r.logf("  ⤷ 已进待审：%s", comment.HTMLURL)

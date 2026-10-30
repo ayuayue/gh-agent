@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { Service, type ConfigDTO } from "../mygo";
+import { useEffect, useState } from "react";
+import { CheckIcon } from "../icons";
+import { Service, type AgentInfo, type ConfigDTO } from "../mygo";
 
 export default function Settings({
   config,
@@ -9,12 +10,22 @@ export default function Settings({
   onSaved: (c: ConfigDTO) => void;
 }) {
   const [form, setForm] = useState(config);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    Service.agents()
+      .then(setAgents)
+      .catch(() => setAgents([]));
+  }, []);
+
   const set = <K extends keyof ConfigDTO>(key: K, value: ConfigDTO[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  const setPath = (repo: string, path: string) =>
+    setForm((f) => ({ ...f, repoPaths: { ...f.repoPaths, [repo]: path } }));
 
   const dirty = JSON.stringify(form) !== JSON.stringify(config);
 
@@ -48,6 +59,42 @@ export default function Settings({
       </p>
 
       <section className="field-group">
+        <header>出稿方</header>
+        <div className="body">
+          <div className="agent-list">
+            {agents.map((a) => (
+              <label
+                key={a.id}
+                className="agent-option"
+                data-selected={form.agent === a.id}
+                data-disabled={!a.available}
+              >
+                <input
+                  type="radio"
+                  name="agent"
+                  value={a.id}
+                  checked={form.agent === a.id}
+                  disabled={!a.available}
+                  onChange={() => set("agent", a.id)}
+                />
+                <span className="agent-body">
+                  <span className="agent-name">
+                    {a.name}
+                    {form.agent === a.id && <CheckIcon size={13} />}
+                  </span>
+                  <span className="agent-desc">{a.desc}</span>
+                  {a.detail && <span className="agent-detail">{a.detail}</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+          <span className="hint" style={{ gridColumn: "1 / -1" }}>
+            本地 agent 能读仓库、跑命令，出稿更准但慢得多；模型端点只看到 prompt 里的上下文。
+          </span>
+        </div>
+      </section>
+
+      <section className="field-group">
         <header>仓库与轮询</header>
         <div className="body">
           <label className="field" style={{ gridColumn: "1 / -1" }}>
@@ -68,6 +115,19 @@ export default function Settings({
             />
             <span className="hint">多个仓库用逗号分隔</span>
           </label>
+
+          {form.repos.map((repo) => (
+            <label className="field" key={repo} style={{ gridColumn: "1 / -1" }}>
+              <span>{repo} 的本地目录</span>
+              <input
+                value={form.repoPaths[repo] ?? ""}
+                onChange={(e) => setPath(repo, e.target.value)}
+                placeholder="D:/project/xxx（留空则用配置目录下的空目录）"
+                spellCheck={false}
+              />
+              <span className="hint">本地 agent 在这个目录里读代码、跑命令</span>
+            </label>
+          ))}
 
           <label className="field">
             <span>轮询间隔</span>
@@ -98,13 +158,12 @@ export default function Settings({
               value={form.maxPerPoll}
               onChange={(e) => set("maxPerPoll", Number(e.target.value))}
             />
-            <span className="hint">防止一次刷太多</span>
           </label>
         </div>
       </section>
 
       <section className="field-group">
-        <header>模型</header>
+        <header>模型端点（agent 选 llm 时才用）</header>
         <div className="body">
           <label className="field">
             <span>端点</span>

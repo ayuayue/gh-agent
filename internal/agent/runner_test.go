@@ -17,6 +17,15 @@ import (
 	"github.com/ayuayue/gh-agent/internal/state"
 )
 
+// llmResponder 把 llm.Client 适配成 agent.Responder，测试里只需要这一层。
+type llmResponder struct{ c *llm.Client }
+
+func (r llmResponder) Respond(ctx context.Context, req agent.Request) (string, error) {
+	return r.c.Chat(ctx, req.System, req.User)
+}
+
+func (r llmResponder) Label() string { return r.c.Model }
+
 // TestRunnerEndToEnd 用两个假服务（GitHub REST + OpenAI 兼容端点）跑通
 // 「列条目 → 列评论 → 过滤 → 出稿 → 回帖 → 记账」整条链路，不碰外网。
 func TestRunnerEndToEnd(t *testing.T) {
@@ -86,7 +95,7 @@ func TestRunnerEndToEnd(t *testing.T) {
 		Me:           "me",
 		Live:         true,
 		GH:           gh,
-		LLM:          llm.New(modelSrv.URL, "test-model", "", 10*time.Second, 256, 0.2),
+		Responder:    llmResponder{llm.New(modelSrv.URL, "test-model", "", 10*time.Second, 256, 0.2)},
 		State:        st,
 		StatePath:    filepath.Join(t.TempDir(), "state.json"),
 		Logf:         func(string, ...any) {},
@@ -142,7 +151,7 @@ func TestRunnerDryRunSkipsPosting(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	runner := &agent.Runner{
 		Config: cfg, Instructions: "x", Me: "me", Live: false, GH: gh,
-		LLM:       llm.New(modelSrv.URL, "m", "", 10*time.Second, 128, 0),
+		Responder: llmResponder{llm.New(modelSrv.URL, "m", "", 10*time.Second, 128, 0)},
 		State:     state.Load(statePath),
 		StatePath: statePath,
 		Logf:      func(string, ...any) {},

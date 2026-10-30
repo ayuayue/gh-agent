@@ -544,3 +544,82 @@ input:focus {
   .topbar { gap: 10px; }
   .topbar p { display: none; }
 }
+
+/* ---------- 出稿方选择 ---------- */
+.agent-list { display: flex; flex-direction: column; gap: 8px; grid-column: 1 / -1; }
+
+.agent-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 150ms, background-color 150ms;
+}
+.agent-option:hover { border-color: var(--line-strong); background: var(--panel-2); }
+.agent-option[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+.agent-option[data-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.agent-option input { width: auto; min-height: 0; margin-top: 2px; accent-color: var(--accent); }
+
+.agent-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.agent-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.agent-name svg { color: var(--accent); }
+.agent-desc { font-size: 12px; color: var(--text-2); }
+.agent-detail { font-size: 11.5px; color: var(--text-3); }
+.agent-option[data-disabled="true"] .agent-detail { color: var(--danger); }
+.agent-list + .hint { grid-column: 1 / -1; }
+
+/* ---------- 草稿上的 agent 标记 ---------- */
+.agent-chip {
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.agent-select {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.agent-select:hover { border-color: var(--text-3); }
+
+/* ---------- 就地编辑 ---------- */
+.editor {
+  width: 100%;
+  min-height: 240px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: vertical;
+}
+.editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}

@@ -39,6 +39,11 @@ type Config struct {
 	Provider            Provider `json:"provider"`
 	Signature           string   `json:"signature"`
 	InstructionsFile    string   `json:"instructions_file"`
+	// Agent 决定谁出稿："llm"（默认，打 provider 端点）或本地 agent 的 id（pi / codebuddy）。
+	Agent string `json:"agent"`
+	// RepoPaths 把仓库映射到本地工作目录；本地 agent 在这个目录里跑，
+	// 才能读代码、跑命令。留空则用配置目录下的 work/<repo> 空目录。
+	RepoPaths map[string]string `json:"repo_paths"`
 }
 
 // Default 返回一份可直接使用的默认配置：仓库留空（必须先填），
@@ -63,6 +68,8 @@ func Default() Config {
 		},
 		Signature:        "*本条由本地 AI 助手自动生成，结论请以代码为准。*",
 		InstructionsFile: "",
+		Agent:            "llm",
+		RepoPaths:        map[string]string{},
 	}
 }
 
@@ -175,6 +182,13 @@ func (c *Config) Validate() error {
 	}
 	if len(c.AllowedAssociations) == 0 {
 		c.AllowedAssociations = Default().AllowedAssociations
+	}
+	c.Agent = strings.TrimSpace(c.Agent)
+	if c.Agent == "" {
+		c.Agent = "llm"
+	}
+	if c.RepoPaths == nil {
+		c.RepoPaths = map[string]string{}
 	}
 	return nil
 }
