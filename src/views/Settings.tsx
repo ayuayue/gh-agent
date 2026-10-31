@@ -296,10 +296,12 @@ export default function Settings({
             const models = probe?.ok ? (probe.info.models ?? []) : [];
             const modes = probe?.ok ? (probe.info.modes ?? []) : [];
             // configOptions 里 model / mode 已经在上面单独渲染，剩下的通用渲染。
-            // boolean 型参数（比如 CodeBuddy 的 multitask）当前 agent 改不了，
-            // 只列有选项的 select。
             const configs = (probe?.ok ? (probe.info.configs ?? []) : []).filter(
-              (c) => c.id !== "model" && c.id !== "mode" && (c.options?.length ?? 0) > 0,
+              (c) =>
+                c.id !== "model" &&
+                c.id !== "mode" &&
+                // 只有一个选项的下拉没有意义（比如某些版本的 agent）
+                ((c.options?.length ?? 0) > 1 || c.type === "boolean"),
             );
             if (models.length === 0 && modes.length === 0 && configs.length === 0) {
               return (
@@ -358,7 +360,15 @@ export default function Settings({
                   </label>
                 )}
                 {configs.map((c) => {
-                  const choices = c.options ?? [];
+                  const choices =
+                    c.options && c.options.length > 0
+                      ? c.options
+                      : c.type === "boolean"
+                        ? [
+                            { value: "true", name: "开启" },
+                            { value: "false", name: "关闭" },
+                          ]
+                        : [];
                   const current = opt.config?.[c.id] ?? "";
                   const currentLabel =
                     choices.find((o) => o.value === (current || c.currentValue))?.name ||

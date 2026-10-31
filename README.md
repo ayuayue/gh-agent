@@ -91,8 +91,10 @@ agent 改文件、切分支都碰不到你正在用的工作区；跑完自动�
 真起一次进程，通过 ACP 的 `initialize` / `session/new` 读出名字、版本、默认模型、可用模型、
 模式和能力，显示在卡片下面（服务端有缓存，不会每次翻设置都重起）。
 
-读出参数之后，下面会出现 agent 报的全部可调项：模型、模式（权限 / PTC）、以及
-`configOptions` 里的其余参数（CodeBuddy 的 Deep Thinking、Sandbox、Multitask 等）。
+读出参数之后，下面会出现 agent 报的全部可调项：模型、模式（权限）、工具模式
+（标准 / PTC / 极简 / 创造）、Deep Thinking、Sandbox、Multitask、Delegate 等。
+CodeBuddy ≥2.178.1 拿 `initialize` 里的 vendor 扩展 `clientCapabilities._meta["codebuddy.ai"].mainAgentSupport`
+做门控，不声明就不下发工具模式和 Main Agent 相关项——我们默认声明，所以在它那儿这些参数是可见的。
 模型走 `session/set_model`，模式走 `session/set_mode`，其余走 `session/set_config_option`；
 保存后**下一次新起的会话**生效。参数按 agent 分别记在配置里：
 

@@ -263,6 +263,12 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 			// 我们不提供文件读写和终端，agent 要用就自己用它的工具。
 			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
 			"terminal": false,
+			// CodeBuddy ≥2.178.1 用这条 vendor 扩展做 mainAgentOptIn 门控：
+			// 不声明就不下发 toolMode（工具模式 / PTC）、agent（Main Agent）、delegate。
+			// 其他 agent 按 ACP 规范忽略未知 _meta。
+			"_meta": map[string]any{
+				"codebuddy.ai": map[string]any{"mainAgentSupport": true},
+			},
 		},
 	})
 	if err != nil {
@@ -468,21 +474,23 @@ func (c *Client) applyOptions(ctx context.Context) error {
 		}
 		sort.Strings(ids)
 		for _, id := range ids {
-			// CodeBuddy 的 boolean 型参数（multitask）用 set_config_option 会被拒
-			// （Invalid params），界面上也不提供修改；跳过，别让它拖垮整个会话。
-			if c.configTypes[id] == "boolean" {
-				continue
-			}
-			var value any = c.configs[id]
-			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_, err := c.call(callCtx, "session/set_config_option", map[string]any{
+			params := map[string]any{
 				"sessionId": c.sessionID,
 				"configId":  id,
-				"value":     value,
-			})
+			}
+			// boolean 项必须带上 agent 声明的 type：CodeBuddy 2.178.1 对
+			// {configId, value} 按 string 分支校验，boolean 会直接 -32602。
+			if c.configTypes[id] == "boolean" {
+				params["type"] = "boolean"
+				params["value"] = c.configs[id] == "true"
+			} else {
+				params["value"] = c.configs[id]
+			}
+			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			_, err := c.call(callCtx, "session/set_config_option", params)
 			cancel()
 			if err != nil {
-				return fmt.Errorf("设置参数 %s=%v 失败：%w", id, value, err)
+				return fmt.Errorf("设置参数 %s=%v 失败：%w", id, params["value"], err)
 			}
 		}
 	}
