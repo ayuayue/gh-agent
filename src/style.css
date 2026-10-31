@@ -231,7 +231,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .banner svg { flex: none; margin-top: 1px; }
 
 /* ---------- drafts ---------- */
-.drafts { display: flex; flex-direction: column; gap: 12px; max-width: 1040px; }
+.drafts { display: flex; flex-direction: column; gap: 12px; }
 
 .draft {
   background: var(--panel);
@@ -422,7 +422,6 @@ button.link:hover { background: none; text-decoration: underline; }
 
 /* ---------- logs ---------- */
 .logs {
-  max-width: 900px;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
   line-height: 1.75;
@@ -443,7 +442,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .logrow.err .msg { color: var(--danger); }
 
 /* ---------- settings ---------- */
-.settings { max-width: 920px; display: flex; flex-direction: column; gap: 22px; }
+.settings { display: flex; flex-direction: column; gap: 22px; }
 
 .field-group {
   border: 1px solid var(--line);
