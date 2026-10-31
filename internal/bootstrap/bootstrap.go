@@ -141,10 +141,13 @@ func ResponderFor(cfg config.Config, agentID string, logf func(string, ...any)) 
 	if _, ok := acp.Lookup(kind); !ok {
 		return nil, fmt.Errorf("配置里的 agent %q 不认识，可选：codebuddy、codex、claude、pi", kind)
 	}
+	opt := cfg.AgentOptionFor(kind)
 	return &acp.Responder{
 		AgentID: kind,
 		Workdir: func(repo string) string { return RepoWorkdir(cfg, repo) },
 		Policy:  acp.ParsePolicy(cfg.AgentPermission),
+		Model:   opt.Model,
+		Mode:    opt.Mode,
 		Timeout: agentTimeout,
 		Logf:    logf,
 	}, nil

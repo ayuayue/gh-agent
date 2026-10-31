@@ -34,6 +34,15 @@ type Config struct {
 	// RepoPaths 把仓库映射到本地工作目录；本地 agent 在这个目录里跑，
 	// 才能读代码、跑命令。留空则用配置目录下的 work/<repo> 空目录。
 	RepoPaths map[string]string `json:"repo_paths"`
+	// AgentOptions 按 agent id 记调用参数：模型和模式（比如 CodeBuddy 的 PTC 模式）。
+	// 空值表示用 agent 自己的默认。
+	AgentOptions map[string]AgentOption `json:"agent_options"`
+}
+
+// AgentOption 是某个出稿方的调用参数。
+type AgentOption struct {
+	Model string `json:"model,omitempty"`
+	Mode  string `json:"mode,omitempty"`
 }
 
 // Default 返回一份可直接使用的默认配置：仓库留空（必须先填），
@@ -143,10 +152,16 @@ func (c Config) MonitoredRepos() []string {
 	return out
 }
 
-// Normalize 把 repo_paths 里的仓库并进 repos。Load 之后调用，
+// Normalize 把 repo_paths 里的仓库并进 repos，并补齐 map 字段。Load 之后调用，
 // 这样轮询、界面、状态文件看到的都是同一份仓库列表。
 func (c *Config) Normalize() {
 	c.Repos = c.MonitoredRepos()
+	if c.RepoPaths == nil {
+		c.RepoPaths = map[string]string{}
+	}
+	if c.AgentOptions == nil {
+		c.AgentOptions = map[string]AgentOption{}
+	}
 }
 
 // Save 原子写配置（同目录临时文件 + rename）。
@@ -213,7 +228,24 @@ func (c *Config) Validate() error {
 	if c.RepoPaths == nil {
 		c.RepoPaths = map[string]string{}
 	}
+	if c.AgentOptions == nil {
+		c.AgentOptions = map[string]AgentOption{}
+	}
+	for id, opt := range c.AgentOptions {
+		opt.Model = strings.TrimSpace(opt.Model)
+		opt.Mode = strings.TrimSpace(opt.Mode)
+		if opt.Model == "" && opt.Mode == "" {
+			delete(c.AgentOptions, id)
+			continue
+		}
+		c.AgentOptions[id] = opt
+	}
 	return nil
+}
+
+// AgentOptionFor 返回某个 agent 的调用参数。
+func (c Config) AgentOptionFor(id string) AgentOption {
+	return c.AgentOptions[id]
 }
 
 // Interval 是轮询间隔。

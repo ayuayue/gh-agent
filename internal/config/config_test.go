@@ -116,3 +116,23 @@ func TestValidateRequiresAgent(t *testing.T) {
 		t.Errorf("选了出稿方应通过: %v", err)
 	}
 }
+
+func TestAgentOptionsNormalize(t *testing.T) {
+	cfg := Default()
+	cfg.Agent = "codebuddy"
+	cfg.Repos = []string{"o/r"}
+	cfg.AgentOptions = map[string]AgentOption{
+		"codebuddy": {Model: " glm-5.3 ", Mode: ""},
+		"pi":        {},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	opt := cfg.AgentOptionFor("codebuddy")
+	if opt.Model != "glm-5.3" {
+		t.Errorf("模型应去掉首尾空格，得到 %q", opt.Model)
+	}
+	if _, ok := cfg.AgentOptions["pi"]; ok {
+		t.Error("全空的参数项应被清掉")
+	}
+}

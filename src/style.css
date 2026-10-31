@@ -1002,3 +1002,11 @@ input:focus {
 
 .tag.merged { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
 
+.agent-option-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.agent-option-grid select { width: 100%; }
+

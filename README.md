@@ -87,8 +87,20 @@ agent 改文件、切分支都碰不到你正在用的工作区；跑完自动�
 | `pi` | `npx -y pi-acp` | pi coding agent，经 pi-acp 适配器 |
 
 四个都跑在本机进程里，默认都能读代码、跑命令。设置页每个 agent 卡片的「读取参数」会
-真起一次进程，通过 ACP 的 `initialize` / `session/new` 读出名字、版本、默认模型、可用模型
-和能力，显示在卡片下面（服务端有缓存，不会每次翻设置都重起）。
+真起一次进程，通过 ACP 的 `initialize` / `session/new` 读出名字、版本、默认模型、可用模型、
+模式和能力，显示在卡片下面（服务端有缓存，不会每次翻设置都重起）。
+
+读出参数之后，可以在「模型」「模式」两个下拉里改：模型走 `session/set_model`，
+模式走 `session/set_mode`（CodeBuddy 的 PTC / 权限模式就在这），保存后**下一次新起的会话**
+生效。参数按 agent 分别记在配置里：
+
+```json
+"agent_options": {
+  "codebuddy": { "model": "custom-local:codebuddy/glm-5.3", "mode": "acceptEdits" }
+}
+```
+
+不填就用 agent 自己的默认。选错模型 / 模式时启动会直接报错，不会悄悄退回默认。
 
 本地 agent 走 **ACP（Agent Client Protocol）**，跟编辑器接 agent 是同一套协议。
 ACP 官方只提供 Kotlin / Python / Rust / TypeScript 的 SDK，没有 Go 版，

@@ -2,6 +2,7 @@ package desk
 
 import (
 	"github.com/ayuayue/gh-agent/internal/acp"
+	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/worktree"
 	"github.com/egoist/mygo"
 )
@@ -22,6 +23,8 @@ type ConfigDTO struct {
 	AgentPermission string `json:"agentPermission"`
 	// RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。
 	RepoPaths map[string]string `json:"repoPaths"`
+	// AgentOptions 按 agent id 记调用参数（模型 / 模式）。
+	AgentOptions map[string]config.AgentOption `json:"agentOptions"`
 }
 
 // TaskDTO 是正在出稿的那一条，界面用它显示「处理中」。

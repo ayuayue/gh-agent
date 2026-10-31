@@ -25,17 +25,28 @@ import (
 // protocolVersion 是 ACP v1 的版本号。
 const protocolVersion = 1
 
+// ModelOption / ModeOption 是 agent 报告的可选项：id 用来切换，name 给人看。
+type ModelOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+type ModeOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
 // Details 是 initialize / session/new 里能拿到的 agent 参数：
 // 名字版本、协议能力、可用模型和模式。界面上用来展示「它是什么、默认用什么模型」。
 type Details struct {
-	AgentName    string   `json:"agentName,omitempty"`
-	AgentVersion string   `json:"agentVersion,omitempty"`
-	Protocol     int      `json:"protocol,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	Models       []string `json:"models,omitempty"`
-	CurrentModel string   `json:"currentModel,omitempty"`
-	Modes        []string `json:"modes,omitempty"`
-	CurrentMode  string   `json:"currentMode,omitempty"`
+	AgentName    string        `json:"agentName,omitempty"`
+	AgentVersion string        `json:"agentVersion,omitempty"`
+	Protocol     int           `json:"protocol,omitempty"`
+	Capabilities []string      `json:"capabilities,omitempty"`
+	Models       []ModelOption `json:"models,omitempty"`
+	CurrentModel string        `json:"currentModel,omitempty"`
+	Modes        []ModeOption  `json:"modes,omitempty"`
+	CurrentMode  string        `json:"currentMode,omitempty"`
 }
 
 // Client 是一个已经握手完成的 ACP 会话。
@@ -62,6 +73,10 @@ type Client struct {
 	// policy 决定怎么答复 agent 的工具授权请求。
 	policy Policy
 	denied []string
+
+	// model / mode 是 session/new 之后要切过去的选项；空表示用 agent 默认。
+	model string
+	mode  string
 }
 
 // Option 配置 Client 的行为。
@@ -70,6 +85,17 @@ type Option func(*Client)
 // WithPolicy 设置工具授权策略。不设置时按 deny 处理，什么工具都不放行。
 func WithPolicy(p Policy) Option {
 	return func(c *Client) { c.policy = p }
+}
+
+// WithModel 在 session/new 之后切到指定模型（用 session/set_model）。
+func WithModel(id string) Option {
+	return func(c *Client) { c.model = strings.TrimSpace(id) }
+}
+
+// WithMode 在 session/new 之后切到指定模式（用 session/set_mode），
+// 比如 CodeBuddy 的 PTC / 权限模式。
+func WithMode(id string) Option {
+	return func(c *Client) { c.mode = strings.TrimSpace(id) }
 }
 
 type rpcReply struct {
@@ -251,24 +277,54 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 		info.Capabilities = append(info.Capabilities, "mcp.sse")
 	}
 	for _, model := range session.Models.AvailableModels {
+		if model.ModelID == "" {
+			continue
+		}
 		name := model.Name
 		if name == "" {
 			name = model.ModelID
 		}
-		if name != "" {
-			info.Models = append(info.Models, name)
-		}
+		info.Models = append(info.Models, ModelOption{ID: model.ModelID, Name: name})
 	}
 	for _, mode := range session.Modes.AvailableModes {
+		if mode.ID == "" {
+			continue
+		}
 		name := mode.Name
 		if name == "" {
 			name = mode.ID
 		}
-		if name != "" {
-			info.Modes = append(info.Modes, name)
-		}
+		info.Modes = append(info.Modes, ModeOption{ID: mode.ID, Name: name})
 	}
 	c.details = info
+	return c.applyOptions(ctx)
+}
+
+// applyOptions 按配置切换模型 / 模式。失败就报错——用户明确选了某个模型，
+// 静默退回默认反而更让人困惑。
+func (c *Client) applyOptions(ctx context.Context) error {
+	if c.mode != "" {
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := c.call(callCtx, "session/set_mode", map[string]any{
+			"sessionId": c.sessionID,
+			"modeId":    c.mode,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("切换模式 %q 失败：%w", c.mode, err)
+		}
+	}
+	if c.model != "" {
+		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := c.call(callCtx, "session/set_model", map[string]any{
+			"sessionId": c.sessionID,
+			"modelId":   c.model,
+		})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("切换模型 %q 失败：%w", c.model, err)
+		}
+	}
 	return nil
 }
 

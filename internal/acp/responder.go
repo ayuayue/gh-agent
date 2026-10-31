@@ -31,6 +31,9 @@ type Responder struct {
 	Workdir func(repo string) string
 	// Policy 决定 agent 能用哪些工具。
 	Policy Policy
+	// Model / Mode 是会话要切过去的模型和模式，空表示用 agent 默认。
+	Model string
+	Mode  string
 	// Timeout 是单轮出稿的上限。
 	Timeout time.Duration
 	Logf    func(format string, args ...any)
@@ -73,14 +76,28 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	if policy == "" {
 		policy = PolicyDeny
 	}
-	client, err := Start(runCtx, def.Command, cwd, WithPolicy(policy))
+	opts := []Option{WithPolicy(policy)}
+	if r.Model != "" {
+		opts = append(opts, WithModel(r.Model))
+	}
+	if r.Mode != "" {
+		opts = append(opts, WithMode(r.Mode))
+	}
+	client, err := Start(runCtx, def.Command, cwd, opts...)
 	if err != nil {
 		return agent.Reply{}, fmt.Errorf("%s 启动失败：%w", def.Name, err)
 	}
 	defer client.Close()
 	if r.Logf != nil {
 		if pid := client.PID(); pid > 0 {
-			r.Logf("%s 已启动（pid %d）", def.Name, pid)
+			detail := ""
+			if r.Model != "" {
+				detail += "，模型 " + r.Model
+			}
+			if r.Mode != "" {
+				detail += "，模式 " + r.Mode
+			}
+			r.Logf("%s 已启动（pid %d%s）", def.Name, pid, detail)
 		}
 	}
 

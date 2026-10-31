@@ -16,6 +16,12 @@ export interface AgentInfo {
   current: boolean;
 }
 
+/** AgentOption 是某个出稿方的调用参数。 */
+export interface AgentOption {
+  model?: string;
+  mode?: string;
+}
+
 /** AgentProbe 是一次 ACP 探测的结果：默认模型、可用模型、能力。 */
 export interface AgentProbe {
   id: string;
@@ -40,6 +46,8 @@ export interface ConfigDTO {
   agentPermission: string;
   /** RepoPaths 是仓库到本地工作目录的映射，本地 agent 在这里跑才能读代码。 */
   repoPaths: Record<string, string>;
+  /** AgentOptions 按 agent id 记调用参数（模型 / 模式）。 */
+  agentOptions: Record<string, AgentOption>;
 }
 
 /**
@@ -51,9 +59,9 @@ export interface Details {
   agentVersion?: string;
   protocol?: number;
   capabilities?: string[];
-  models?: string[];
+  models?: ModelOption[];
   currentModel?: string;
-  modes?: string[];
+  modes?: ModeOption[];
   currentMode?: string;
 }
 
@@ -157,6 +165,17 @@ export interface LogLine {
   at: string;
   level: string;
   text: string;
+}
+
+export interface ModeOption {
+  id: string;
+  name?: string;
+}
+
+/** ModelOption / ModeOption 是 agent 报告的可选项：id 用来切换，name 给人看。 */
+export interface ModelOption {
+  id: string;
+  name?: string;
 }
 
 /** PathCheck 是本地目录的检查结果。 */

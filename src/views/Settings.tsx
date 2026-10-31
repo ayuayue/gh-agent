@@ -3,6 +3,7 @@ import { CheckIcon, XIcon } from "../icons";
 import {
   Service,
   type AgentInfo,
+  type AgentOption,
   type AgentProbe,
   type ConfigDTO,
   type PathCheck,
@@ -63,6 +64,16 @@ export default function Settings({
 
   const set = <K extends keyof ConfigDTO>(key: K, value: ConfigDTO[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // 按 agent 记调用参数：切到别的 agent 时互不影响。
+  const setAgentOption = (patch: Partial<AgentOption>) =>
+    setForm((f) => ({
+      ...f,
+      agentOptions: {
+        ...f.agentOptions,
+        [f.agent]: { ...(f.agentOptions[f.agent] ?? {}), ...patch },
+      },
+    }));
 
   // 目录一变就重新检查：是不是存在、是不是 git 仓库。
   const pathKey = Object.values(form.repoPaths).join("|");
@@ -233,14 +244,22 @@ export default function Settings({
                           </span>
                         )}
                         {models.length > 0 && (
-                          <span className="agent-params" title={models.join("\n")}>
-                            可用模型 {models.length} 个：{models.slice(0, 5).join(" / ")}
+                          <span className="agent-params" title={models.map((m) => m.name || m.id).join("\n")}>
+                            可用模型 {models.length} 个：
+                            {models
+                              .slice(0, 5)
+                              .map((m) => m.name || m.id)
+                              .join(" / ")}
                             {models.length > 5 ? " …" : ""}
                           </span>
                         )}
                         {modes.length > 0 && (
                           <span className="agent-params">
-                            模式 {modes.slice(0, 5).join(" / ")}
+                            模式{" "}
+                            {modes
+                              .slice(0, 5)
+                              .map((m) => m.name || m.id)
+                              .join(" / ")}
                             {modes.length > 5 ? " …" : ""}
                           </span>
                         )}
@@ -257,10 +276,74 @@ export default function Settings({
               </label>
             ))}
           </div>
+          {(() => {
+            if (!form.agent) return null;
+            const probe = probes[form.agent];
+            const models = probe?.ok ? (probe.info.models ?? []) : [];
+            const modes = probe?.ok ? (probe.info.modes ?? []) : [];
+            if (models.length === 0 && modes.length === 0) {
+              return (
+                <span className="hint" style={{ gridColumn: "1 / -1" }}>
+                  {probe ? "这个 agent 没报可选模型 / 模式。" : "「读取参数」之后，这里可以选模型和模式。"}
+                </span>
+              );
+            }
+            const opt = (form.agentOptions ?? {})[form.agent] ?? {};
+            const modelLabel =
+              models.find((m) => m.id === (opt.model || probe?.info.currentModel))?.name ||
+              opt.model ||
+              probe?.info.currentModel ||
+              "默认";
+            const modeLabel =
+              modes.find((m) => m.id === (opt.mode || probe?.info.currentMode))?.name ||
+              opt.mode ||
+              probe?.info.currentMode ||
+              "默认";
+            return (
+              <div className="agent-option-grid">
+                {models.length > 0 && (
+                  <label className="field">
+                    <span>模型</span>
+                    <select
+                      className="agent-select"
+                      value={opt.model ?? ""}
+                      onChange={(e) => setAgentOption({ model: e.target.value })}
+                    >
+                      <option value="">agent 默认（{modelLabel}）</option>
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name || m.id}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="hint">保存后，下一次新起的会话用这个模型</span>
+                  </label>
+                )}
+                {modes.length > 0 && (
+                  <label className="field">
+                    <span>模式</span>
+                    <select
+                      className="agent-select"
+                      value={opt.mode ?? ""}
+                      onChange={(e) => setAgentOption({ mode: e.target.value })}
+                    >
+                      <option value="">agent 默认（{modeLabel}）</option>
+                      {modes.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name || m.id}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="hint">比如 CodeBuddy 的 PTC / 权限模式</span>
+                  </label>
+                )}
+              </div>
+            );
+          })()}
           <span className="hint" style={{ gridColumn: "1 / -1" }}>
             {form.agent === ""
               ? "还没选出稿方：选一个才能开始轮询和审查。"
-              : "四个 agent 都跑在本机进程里，能读代码、跑命令；「读取参数」会真起一次进程，读出默认模型和能力。"}
+              : "模型 / 模式按 agent 分别记住；不选就用 agent 自己的默认。"}
           </span>
         </div>
       </section>

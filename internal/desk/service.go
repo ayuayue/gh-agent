@@ -823,6 +823,7 @@ func toDTO(c config.Config) ConfigDTO {
 		Agent:               c.Agent,
 		AgentPermission:     perm,
 		RepoPaths:           c.RepoPaths,
+		AgentOptions:        c.AgentOptions,
 	}
 }
 
@@ -839,6 +840,9 @@ func applyDTO(c config.Config, in ConfigDTO) config.Config {
 	c.AgentPermission = in.AgentPermission
 	if in.RepoPaths != nil {
 		c.RepoPaths = in.RepoPaths
+	}
+	if in.AgentOptions != nil {
+		c.AgentOptions = in.AgentOptions
 	}
 	return c
 }
