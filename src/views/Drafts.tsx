@@ -132,9 +132,11 @@ export default function Drafts({
     }
   };
 
+  // 默认用产出这条草稿的 agent 重做；下拉可以换成别的。
+  const agentIdOf = (d: Draft) => agents.find((a) => a.name === d.agent)?.id ?? "";
+
   const redraft = async (d: Draft) => {
-    const agentID = redo[d.id] ?? "";
-    if (!agentID) return;
+    const agentID = redo[d.id] ?? agentIdOf(d);
     setBusy(d.id + "|redraft");
     setError("");
     try {
@@ -296,11 +298,11 @@ export default function Drafts({
                   </button>
                   <select
                     className="agent-select"
-                    value={redo[d.id] ?? ""}
+                    value={redo[d.id] ?? agentIdOf(d)}
                     onChange={(e) => setRedo((prev) => ({ ...prev, [d.id]: e.target.value }))}
-                    title="换一个 agent 重做"
+                    title="重做用的 agent，默认是产出这条草稿的那个"
                   >
-                    <option value="">换 agent…</option>
+                    {!(redo[d.id] ?? agentIdOf(d)) && <option value="">默认 agent</option>}
                     {agents
                       .filter((a) => a.available)
                       .map((a) => (
@@ -312,7 +314,8 @@ export default function Drafts({
                   <button
                     className="ghost"
                     onClick={() => redraft(d)}
-                    disabled={working || !(redo[d.id] ?? "")}
+                    disabled={working}
+                    title="用选中的 agent 重新审一遍这条，结果覆盖这条草稿"
                   >
                     <RefreshIcon size={14} />
                     {kind === "redraft" ? "重做中…" : "重做"}

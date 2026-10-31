@@ -110,6 +110,11 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	if err != nil {
 		return agent.Reply{}, fmt.Errorf("%s 出稿失败：%w", def.Name, err)
 	}
+	// 有的 agent 会把运行时中止当成普通正文返回（stopReason 仍是正常），
+	// 不拦住就会把错误提示当草稿发到 GitHub。
+	if reason := agent.RuntimeFailure(out); reason != "" {
+		return agent.Reply{}, fmt.Errorf("%s 这一轮没有真正执行：%s", def.Name, reason)
+	}
 	if tools := client.Tools(); len(tools) > 0 && r.Logf != nil {
 		r.Logf("%s 用了 %d 个工具：%s", def.Name, len(tools), strings.Join(tools, "、"))
 	}
