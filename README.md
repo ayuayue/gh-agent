@@ -91,9 +91,10 @@ agent 改文件、切分支都碰不到你正在用的工作区；跑完自动�
 真起一次进程，通过 ACP 的 `initialize` / `session/new` 读出名字、版本、默认模型、可用模型、
 模式和能力，显示在卡片下面（服务端有缓存，不会每次翻设置都重起）。
 
-读出参数之后，可以在「模型」「模式」两个下拉里改：模型走 `session/set_model`，
-模式走 `session/set_mode`（CodeBuddy 的 PTC / 权限模式就在这），保存后**下一次新起的会话**
-生效。参数按 agent 分别记在配置里：
+读出参数之后，下面会出现 agent 报的全部可调项：模型、模式（权限 / PTC）、以及
+`configOptions` 里的其余参数（CodeBuddy 的 Deep Thinking、Sandbox、Multitask 等）。
+模型走 `session/set_model`，模式走 `session/set_mode`，其余走 `session/set_config_option`；
+保存后**下一次新起的会话**生效。参数按 agent 分别记在配置里：
 
 ```json
 "agent_options": {

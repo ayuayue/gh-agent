@@ -44,8 +44,8 @@ func TestLiveSetOptions(t *testing.T) {
 	id := os.Getenv("ACP_PROBE")
 	model := os.Getenv("ACP_SET_MODEL")
 	mode := os.Getenv("ACP_SET_MODE")
-	if id == "" || (model == "" && mode == "") {
-		t.Skip("设置 ACP_PROBE 和 ACP_SET_MODEL / ACP_SET_MODE 才跑")
+	if id == "" || (model == "" && mode == "" && os.Getenv("ACP_SET_CONFIG") == "") {
+		t.Skip("设置 ACP_PROBE 和 ACP_SET_MODEL / ACP_SET_MODE / ACP_SET_CONFIG 才跑")
 	}
 	def, ok := Lookup(id)
 	if !ok {
@@ -57,12 +57,24 @@ func TestLiveSetOptions(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
+	configs := map[string]string{}
+	for _, pair := range strings.Split(os.Getenv("ACP_SET_CONFIG"), ",") {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			configs[parts[0]] = parts[1]
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
-	client, err := Start(ctx, def.Command, dir, WithPolicy(PolicyDeny), WithModel(model), WithMode(mode))
+	opts := []Option{WithPolicy(PolicyDeny), WithModel(model), WithMode(mode)}
+	if len(configs) > 0 {
+		opts = append(opts, WithConfig(configs))
+	}
+	client, err := Start(ctx, def.Command, dir, opts...)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer client.Close()
-	fmt.Printf("设置成功 model=%q mode=%q\n", model, mode)
+	fmt.Printf("设置成功 model=%q mode=%q config=%v\n", model, mode, configs)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/ayuayue/gh-agent/internal/config"
 	"github.com/ayuayue/gh-agent/internal/ghapi"
 	"github.com/ayuayue/gh-agent/internal/state"
+	"github.com/ayuayue/gh-agent/internal/winproc"
 )
 
 // agentTimeout 是本地 agent 单轮出稿的上限。读代码 + 跑命令比打模型慢得多。
@@ -114,7 +115,9 @@ func ResolveToken() (string, error) {
 			return value, nil
 		}
 	}
-	out, err := exec.Command("gh", "auth", "token").Output()
+	gh := exec.Command("gh", "auth", "token")
+	winproc.Hide(gh)
+	out, err := gh.Output()
 	if err == nil {
 		if token := strings.TrimSpace(string(out)); token != "" {
 			return token, nil
@@ -148,6 +151,7 @@ func ResponderFor(cfg config.Config, agentID string, logf func(string, ...any)) 
 		Policy:  acp.ParsePolicy(cfg.AgentPermission),
 		Model:   opt.Model,
 		Mode:    opt.Mode,
+		Config:  opt.Config,
 		Timeout: agentTimeout,
 		Logf:    logf,
 	}, nil

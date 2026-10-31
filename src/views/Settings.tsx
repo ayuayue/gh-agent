@@ -32,7 +32,8 @@ export default function Settings({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [probes, setProbes] = useState<Record<string, AgentProbe>>({});
-  const [probing, setProbing] = useState("");
+  // 按 agent 记「读取中」：探一个的时候不该把别的也锁住。
+  const [probing, setProbing] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     Service.agents()
@@ -41,8 +42,8 @@ export default function Settings({
   }, []);
 
   const probeAgent = async (id: string, refresh = false) => {
-    if (!id || probing) return;
-    setProbing(id);
+    if (!id || probing[id]) return;
+    setProbing((prev) => ({ ...prev, [id]: true }));
     try {
       const result = await Service.probeAgent(id, refresh);
       setProbes((prev) => ({ ...prev, [id]: result }));
@@ -52,7 +53,7 @@ export default function Settings({
         [id]: { id, ok: false, info: {}, detail: err instanceof Error ? err.message : String(err) },
       }));
     } finally {
-      setProbing("");
+      setProbing((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -64,6 +65,19 @@ export default function Settings({
 
   const set = <K extends keyof ConfigDTO>(key: K, value: ConfigDTO[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // 改 agent 报的其余参数（thought_level / sandbox / multitask 等）。
+  const setAgentConfig = (id: string, value: string) =>
+    setForm((f) => {
+      const current = (f.agentOptions ?? {})[f.agent] ?? {};
+      const config = { ...(current.config ?? {}) };
+      if (value) config[id] = value;
+      else delete config[id];
+      return {
+        ...f,
+        agentOptions: { ...f.agentOptions, [f.agent]: { ...current, config } },
+      };
+    });
 
   // 按 agent 记调用参数：切到别的 agent 时互不影响。
   const setAgentOption = (patch: Partial<AgentOption>) =>
@@ -218,9 +232,9 @@ export default function Settings({
                           e.stopPropagation();
                           void probeAgent(a.id, true);
                         }}
-                        disabled={probing === a.id}
+                        disabled={probing[a.id]}
                       >
-                        {probing === a.id ? "读取中…" : "读取参数"}
+                        {probing[a.id] ? "读取中…" : "读取参数"}
                       </button>
                     )}
                     {form.agent === a.id && <CheckIcon size={13} />}
@@ -281,10 +295,16 @@ export default function Settings({
             const probe = probes[form.agent];
             const models = probe?.ok ? (probe.info.models ?? []) : [];
             const modes = probe?.ok ? (probe.info.modes ?? []) : [];
-            if (models.length === 0 && modes.length === 0) {
+            // configOptions 里 model / mode 已经在上面单独渲染，剩下的通用渲染。
+            // boolean 型参数（比如 CodeBuddy 的 multitask）当前 agent 改不了，
+            // 只列有选项的 select。
+            const configs = (probe?.ok ? (probe.info.configs ?? []) : []).filter(
+              (c) => c.id !== "model" && c.id !== "mode" && (c.options?.length ?? 0) > 0,
+            );
+            if (models.length === 0 && modes.length === 0 && configs.length === 0) {
               return (
                 <span className="hint" style={{ gridColumn: "1 / -1" }}>
-                  {probe ? "这个 agent 没报可选模型 / 模式。" : "「读取参数」之后，这里可以选模型和模式。"}
+                  {probe ? "这个 agent 没报可选参数。" : "「读取参数」之后，这里可以选模型、模式和其他参数。"}
                 </span>
               );
             }
@@ -337,6 +357,32 @@ export default function Settings({
                     <span className="hint">比如 CodeBuddy 的 PTC / 权限模式</span>
                   </label>
                 )}
+                {configs.map((c) => {
+                  const choices = c.options ?? [];
+                  const current = opt.config?.[c.id] ?? "";
+                  const currentLabel =
+                    choices.find((o) => o.value === (current || c.currentValue))?.name ||
+                    c.currentValue ||
+                    "默认";
+                  return (
+                    <label className="field" key={c.id}>
+                      <span>{c.name || c.id}</span>
+                      <select
+                        className="agent-select"
+                        value={current}
+                        onChange={(e) => setAgentConfig(c.id, e.target.value)}
+                      >
+                        <option value="">agent 默认（{currentLabel}）</option>
+                        {choices.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.name || o.value}
+                          </option>
+                        ))}
+                      </select>
+                      {c.description && <span className="hint">{c.description}</span>}
+                    </label>
+                  );
+                })}
               </div>
             );
           })()}

@@ -16,10 +16,13 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ayuayue/gh-agent/internal/winproc"
 )
 
 // protocolVersion 是 ACP v1 的版本号。
@@ -36,6 +39,25 @@ type ModeOption struct {
 	Name string `json:"name,omitempty"`
 }
 
+// ConfigChoice 是 configOption 里的一个可选值。
+type ConfigChoice struct {
+	Value       string `json:"value"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// ConfigOption 是 agent 报的会话参数（权限模式、深度思考、沙箱、多任务……）。
+// 不同 agent 报的项不一样，界面按这个列表通用渲染。
+type ConfigOption struct {
+	Type         string         `json:"type"` // select / boolean
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description,omitempty"`
+	Category     string         `json:"category,omitempty"`
+	CurrentValue string         `json:"currentValue,omitempty"`
+	Options      []ConfigChoice `json:"options,omitempty"`
+}
+
 // Details 是 initialize / session/new 里能拿到的 agent 参数：
 // 名字版本、协议能力、可用模型和模式。界面上用来展示「它是什么、默认用什么模型」。
 type Details struct {
@@ -47,6 +69,8 @@ type Details struct {
 	CurrentModel string        `json:"currentModel,omitempty"`
 	Modes        []ModeOption  `json:"modes,omitempty"`
 	CurrentMode  string        `json:"currentMode,omitempty"`
+	// Configs 是 agent 报的全部可调参数（含 model / mode 自身）。
+	Configs []ConfigOption `json:"configs,omitempty"`
 }
 
 // Client 是一个已经握手完成的 ACP 会话。
@@ -77,6 +101,9 @@ type Client struct {
 	// model / mode 是 session/new 之后要切过去的选项；空表示用 agent 默认。
 	model string
 	mode  string
+	// configs 是其余会话参数（id -> 值），按 agent 报的 type 决定传字符串还是布尔。
+	configs     map[string]string
+	configTypes map[string]string
 }
 
 // Option 配置 Client 的行为。
@@ -96,6 +123,23 @@ func WithModel(id string) Option {
 // 比如 CodeBuddy 的 PTC / 权限模式。
 func WithMode(id string) Option {
 	return func(c *Client) { c.mode = strings.TrimSpace(id) }
+}
+
+// WithConfig 设置其余会话参数（configOptions 里的 id -> value），
+// 比如 thought_level / sandbox / multitask。
+func WithConfig(values map[string]string) Option {
+	return func(c *Client) {
+		if len(values) == 0 {
+			return
+		}
+		c.configs = make(map[string]string, len(values))
+		for id, v := range values {
+			v = strings.TrimSpace(v)
+			if id = strings.TrimSpace(id); id != "" && v != "" {
+				c.configs[id] = v
+			}
+		}
+	}
 }
 
 type rpcReply struct {
@@ -194,6 +238,12 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 		} `json:"agentInfo"`
 		AgentCapabilities struct {
 			LoadSession        bool `json:"loadSession"`
+			DelegateTools      bool `json:"delegateToolsSupport"`
+			MainAgent          bool `json:"mainAgentSupport"`
+			Multitask          bool `json:"multitaskSupport"`
+			ToolMode           bool `json:"toolModeSupport"`
+			CodeMode           bool `json:"codeModeSupport"`
+			MetaPrompt         bool `json:"metaPromptSupport"`
 			PromptCapabilities struct {
 				Image           bool `json:"image"`
 				Audio           bool `json:"audio"`
@@ -207,15 +257,20 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 	}
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if err := c.callInto(initCtx, "initialize", map[string]any{
+	rawInit, err := c.call(initCtx, "initialize", map[string]any{
 		"protocolVersion": protocolVersion,
 		"clientCapabilities": map[string]any{
 			// 我们不提供文件读写和终端，agent 要用就自己用它的工具。
 			"fs":       map[string]any{"readTextFile": false, "writeTextFile": false},
 			"terminal": false,
 		},
-	}, &init); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("initialize 失败：%w", err)
+	}
+	dumpRaw("initialize", rawInit)
+	if err := json.Unmarshal(rawInit, &init); err != nil {
+		return fmt.Errorf("解析 initialize 结果失败：%w", err)
 	}
 
 	var session struct {
@@ -234,14 +289,32 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 				Name string `json:"name"`
 			} `json:"availableModes"`
 		} `json:"modes"`
+		ConfigOptions []struct {
+			Type         string          `json:"type"`
+			ID           string          `json:"id"`
+			Name         string          `json:"name"`
+			Description  string          `json:"description"`
+			Category     string          `json:"category"`
+			CurrentValue json.RawMessage `json:"currentValue"`
+			Options      []struct {
+				Value       string `json:"value"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"configOptions"`
 	}
 	newCtx, cancel2 := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel2()
-	if err := c.callInto(newCtx, "session/new", map[string]any{
+	rawSession, err := c.call(newCtx, "session/new", map[string]any{
 		"cwd":        cwd,
 		"mcpServers": []any{},
-	}, &session); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("session/new 失败：%w", err)
+	}
+	dumpRaw("session/new", rawSession)
+	if err := json.Unmarshal(rawSession, &session); err != nil {
+		return fmt.Errorf("解析 session/new 结果失败：%w", err)
 	}
 	if session.SessionID == "" {
 		return errors.New("session/new 没有返回 sessionId")
@@ -276,6 +349,25 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 	if init.AgentCapabilities.MCPCapabilities.SSE {
 		info.Capabilities = append(info.Capabilities, "mcp.sse")
 	}
+	// PTC / 多任务这类扩展能力，agent 支持才列出来。
+	if init.AgentCapabilities.DelegateTools {
+		info.Capabilities = append(info.Capabilities, "委派工具")
+	}
+	if init.AgentCapabilities.MainAgent {
+		info.Capabilities = append(info.Capabilities, "mainAgent")
+	}
+	if init.AgentCapabilities.Multitask {
+		info.Capabilities = append(info.Capabilities, "多任务")
+	}
+	if init.AgentCapabilities.ToolMode {
+		info.Capabilities = append(info.Capabilities, "工具模式(PTC)")
+	}
+	if init.AgentCapabilities.CodeMode {
+		info.Capabilities = append(info.Capabilities, "codeMode")
+	}
+	if init.AgentCapabilities.MetaPrompt {
+		info.Capabilities = append(info.Capabilities, "metaPrompt")
+	}
 	for _, model := range session.Models.AvailableModels {
 		if model.ModelID == "" {
 			continue
@@ -296,8 +388,52 @@ func (c *Client) handshake(ctx context.Context, cwd string) error {
 		}
 		info.Modes = append(info.Modes, ModeOption{ID: mode.ID, Name: name})
 	}
+	c.configTypes = map[string]string{}
+	for _, opt := range session.ConfigOptions {
+		if opt.ID == "" {
+			continue
+		}
+		converted := ConfigOption{
+			Type:         opt.Type,
+			ID:           opt.ID,
+			Name:         opt.Name,
+			Description:  opt.Description,
+			Category:     opt.Category,
+			CurrentValue: rawValueString(opt.CurrentValue),
+		}
+		for _, choice := range opt.Options {
+			converted.Options = append(converted.Options, ConfigChoice{
+				Value:       choice.Value,
+				Name:        choice.Name,
+				Description: choice.Description,
+			})
+		}
+		info.Configs = append(info.Configs, converted)
+		c.configTypes[opt.ID] = opt.Type
+	}
 	c.details = info
 	return c.applyOptions(ctx)
+}
+
+// rawValueString 把 configOptions 里的 currentValue 归一成字符串：
+// 不同 agent 这里可能是 "high"、true 或数字。
+func rawValueString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return strconv.FormatBool(b)
+	}
+	var n json.Number
+	if json.Unmarshal(raw, &n) == nil {
+		return n.String()
+	}
+	return ""
 }
 
 // applyOptions 按配置切换模型 / 模式。失败就报错——用户明确选了某个模型，
@@ -323,6 +459,31 @@ func (c *Client) applyOptions(ctx context.Context) error {
 		cancel()
 		if err != nil {
 			return fmt.Errorf("切换模型 %q 失败：%w", c.model, err)
+		}
+	}
+	if len(c.configs) > 0 {
+		ids := make([]string, 0, len(c.configs))
+		for id := range c.configs {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			// CodeBuddy 的 boolean 型参数（multitask）用 set_config_option 会被拒
+			// （Invalid params），界面上也不提供修改；跳过，别让它拖垮整个会话。
+			if c.configTypes[id] == "boolean" {
+				continue
+			}
+			var value any = c.configs[id]
+			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			_, err := c.call(callCtx, "session/set_config_option", map[string]any{
+				"sessionId": c.sessionID,
+				"configId":  id,
+				"value":     value,
+			})
+			cancel()
+			if err != nil {
+				return fmt.Errorf("设置参数 %s=%v 失败：%w", id, value, err)
+			}
 		}
 	}
 	return nil
@@ -400,7 +561,9 @@ func (c *Client) Close() error {
 		if c.cmd != nil && c.cmd.Process != nil {
 			if runtime.GOOS == "windows" {
 				// cmd.exe 只是壳，必须连子进程一起杀，否则 node 会留着。
-				_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(c.cmd.Process.Pid)).Run()
+				kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(c.cmd.Process.Pid))
+				winproc.Hide(kill)
+				_ = kill.Run()
 			} else {
 				_ = c.cmd.Process.Kill()
 			}
@@ -650,7 +813,17 @@ func (c *Client) failAll(err error) {
 
 func shellCommand(command string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
-		return exec.Command("cmd", "/c", command)
+		cmd := exec.Command("cmd", "/c", command)
+		winproc.Hide(cmd)
+		return cmd
 	}
 	return exec.Command("sh", "-c", command)
+}
+
+// dumpRaw 在 ACP_DUMP=1 时把原始返回打到 stderr，排查「为什么某个参数没解析出来」用。
+func dumpRaw(method string, raw json.RawMessage) {
+	if os.Getenv("ACP_DUMP") == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "ACP %s => %s\n", method, string(raw))
 }

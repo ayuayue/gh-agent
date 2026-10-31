@@ -20,6 +20,8 @@ export interface AgentInfo {
 export interface AgentOption {
   model?: string;
   mode?: string;
+  /** Config 是 agent 报的其余会话参数（id -> 值），比如 thought_level / sandbox / multitask。 */
+  config?: Record<string, string>;
 }
 
 /** AgentProbe 是一次 ACP 探测的结果：默认模型、可用模型、能力。 */
@@ -28,6 +30,13 @@ export interface AgentProbe {
   ok: boolean;
   detail?: string;
   info: Details;
+}
+
+/** ConfigChoice 是 configOption 里的一个可选值。 */
+export interface ConfigChoice {
+  value: string;
+  name?: string;
+  description?: string;
 }
 
 /** ConfigDTO 是前端看到的配置。token 不在这里：它来自 GH_TOKEN 或 gh auth。 */
@@ -51,6 +60,21 @@ export interface ConfigDTO {
 }
 
 /**
+ * ConfigOption 是 agent 报的会话参数（权限模式、深度思考、沙箱、多任务……）。
+ * 不同 agent 报的项不一样，界面按这个列表通用渲染。
+ */
+export interface ConfigOption {
+  /** select / boolean */
+  type: string;
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  currentValue?: string;
+  options?: ConfigChoice[];
+}
+
+/**
  * Details 是 initialize / session/new 里能拿到的 agent 参数：
  * 名字版本、协议能力、可用模型和模式。界面上用来展示「它是什么、默认用什么模型」。
  */
@@ -63,6 +87,8 @@ export interface Details {
   currentModel?: string;
   modes?: ModeOption[];
   currentMode?: string;
+  /** Configs 是 agent 报的全部可调参数（含 model / mode 自身）。 */
+  configs?: ConfigOption[];
 }
 
 /** Draft 是一条等着人工审核的回复。status 取 pending / posted / rejected / failed / ignored。 */

@@ -34,6 +34,8 @@ type Responder struct {
 	// Model / Mode 是会话要切过去的模型和模式，空表示用 agent 默认。
 	Model string
 	Mode  string
+	// Config 是其余会话参数（thought_level / sandbox / multitask 等）。
+	Config map[string]string
 	// Timeout 是单轮出稿的上限。
 	Timeout time.Duration
 	Logf    func(format string, args ...any)
@@ -82,6 +84,9 @@ func (r *Responder) Respond(ctx context.Context, req agent.Request) (agent.Reply
 	}
 	if r.Mode != "" {
 		opts = append(opts, WithMode(r.Mode))
+	}
+	if len(r.Config) > 0 {
+		opts = append(opts, WithConfig(r.Config))
 	}
 	client, err := Start(runCtx, def.Command, cwd, opts...)
 	if err != nil {

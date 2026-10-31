@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/ayuayue/gh-agent/internal/winproc"
 )
 
 // Snapshot 是某个时刻工作区的状态。
@@ -164,6 +166,7 @@ func clip(text string, limit int) string {
 func git(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	winproc.Hide(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err

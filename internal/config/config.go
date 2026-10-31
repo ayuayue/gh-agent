@@ -43,6 +43,8 @@ type Config struct {
 type AgentOption struct {
 	Model string `json:"model,omitempty"`
 	Mode  string `json:"mode,omitempty"`
+	// Config 是 agent 报的其余会话参数（id -> 值），比如 thought_level / sandbox / multitask。
+	Config map[string]string `json:"config,omitempty"`
 }
 
 // Default 返回一份可直接使用的默认配置：仓库留空（必须先填），
@@ -234,7 +236,17 @@ func (c *Config) Validate() error {
 	for id, opt := range c.AgentOptions {
 		opt.Model = strings.TrimSpace(opt.Model)
 		opt.Mode = strings.TrimSpace(opt.Mode)
-		if opt.Model == "" && opt.Mode == "" {
+		if len(opt.Config) > 0 {
+			cleaned := make(map[string]string, len(opt.Config))
+			for key, value := range opt.Config {
+				key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+				if key != "" && value != "" {
+					cleaned[key] = value
+				}
+			}
+			opt.Config = cleaned
+		}
+		if opt.Model == "" && opt.Mode == "" && len(opt.Config) == 0 {
 			delete(c.AgentOptions, id)
 			continue
 		}
