@@ -121,6 +121,15 @@ export default function App() {
     return () => offs.forEach((off) => off());
   }, []);
 
+  const clearLogs = async () => {
+    try {
+      await Service.clearLogs();
+      setLogs([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const toggle = async () => {
     if (!status) return;
     setBusy(true);
@@ -220,6 +229,11 @@ export default function App() {
             <p>{meta.hint}</p>
           </div>
           <div className="actions">
+            {tab === "logs" && logs.length > 0 && (
+              <button className="ghost" onClick={() => void clearLogs()}>
+                清空
+              </button>
+            )}
             <button className="ghost icon-only" onClick={() => void refresh()} title="刷新">
               <RefreshIcon size={16} />
             </button>

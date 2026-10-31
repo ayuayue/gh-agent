@@ -179,6 +179,13 @@ func (b *logBuffer) Add(level, text string) LogLine {
 	return line
 }
 
+// Clear 清空日志。
+func (b *logBuffer) Clear() {
+	b.mu.Lock()
+	b.items = nil
+	b.mu.Unlock()
+}
+
 func (b *logBuffer) List() []LogLine {
 	b.mu.Lock()
 	defer b.mu.Unlock()

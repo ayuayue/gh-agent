@@ -613,6 +613,11 @@ func (s *Service) Logs() []LogLine {
 	return s.logs.List()
 }
 
+// ClearLogs 清空运行日志（只清内存里的，不影响草稿和 state）。
+func (s *Service) ClearLogs() {
+	s.logs.Clear()
+}
+
 // OpenExternal 用系统浏览器打开链接（webview 里直接点链接会把页面导航走）。
 func (s *Service) OpenExternal(url string) error {
 	if url == "" {

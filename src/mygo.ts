@@ -269,6 +269,10 @@ export const Service = {
   checkPath(path: string): Promise<PathCheck> {
     return call("Service.CheckPath", path);
   },
+  /** ClearLogs 清空运行日志（只清内存里的，不影响草稿和 state）。 */
+  clearLogs(): Promise<void> {
+    return call("Service.ClearLogs");
+  },
   /**
    * Config 返回当前配置。
    * 每次都从磁盘重读：用户直接改 config.json 也能在界面上看到。
