@@ -231,7 +231,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .banner svg { flex: none; margin-top: 1px; }
 
 /* ---------- drafts ---------- */
-.drafts { display: flex; flex-direction: column; gap: 12px; max-width: 860px; }
+.drafts { display: flex; flex-direction: column; gap: 12px; max-width: 1040px; }
 
 .draft {
   background: var(--panel);
@@ -443,7 +443,7 @@ button.link:hover { background: none; text-decoration: underline; }
 .logrow.err .msg { color: var(--danger); }
 
 /* ---------- settings ---------- */
-.settings { max-width: 760px; display: flex; flex-direction: column; gap: 22px; }
+.settings { max-width: 920px; display: flex; flex-direction: column; gap: 22px; }
 
 .field-group {
   border: 1px solid var(--line);
@@ -818,7 +818,7 @@ input:focus {
 .ignore-row input { flex: 1; min-width: 0; }
 
 /* ---------- 条目列表 ---------- */
-.items { display: flex; flex-direction: column; gap: 14px; max-width: 980px; }
+.items { display: flex; flex-direction: column; gap: 14px; }
 
 .items-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .items-bar .spacer { flex: 1; }
