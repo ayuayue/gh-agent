@@ -185,6 +185,8 @@ export interface StatusDTO {
   running: boolean;
   me: string;
   lastPoll: string;
+  /** NextPoll 是下一轮开始时间（RFC3339），未运行或本轮还没跑完时为空。 */
+  nextPoll?: string;
   lastError: string;
   handled: number;
   pending: number;

@@ -35,9 +35,11 @@ type TaskDTO struct {
 
 // StatusDTO 是轮询的当前状态。
 type StatusDTO struct {
-	Running    bool   `json:"running"`
-	Me         string `json:"me"`
-	LastPoll   string `json:"lastPoll"`
+	Running  bool   `json:"running"`
+	Me       string `json:"me"`
+	LastPoll string `json:"lastPoll"`
+	// NextPoll 是下一轮开始时间（RFC3339），未运行或本轮还没跑完时为空。
+	NextPoll   string `json:"nextPoll,omitempty"`
 	LastError  string `json:"lastError"`
 	Handled    int    `json:"handled"`
 	Pending    int    `json:"pending"`

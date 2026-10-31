@@ -43,6 +43,8 @@ type Service struct {
 	running  bool
 	desired  bool
 	lastPoll time.Time
+	// nextPoll 是下一轮预计开始的时间：本轮结束后再等一个 interval。
+	nextPoll time.Time
 	lastErr  string
 	handled  int
 	me       string
@@ -240,6 +242,7 @@ func (s *Service) Stop() StatusDTO {
 	cancel := s.cancel
 	s.cancel = nil
 	s.running = false
+	s.nextPoll = time.Time{}
 	st := s.statusLocked()
 	s.mu.Unlock()
 	if cancel != nil {
@@ -624,6 +627,7 @@ func (s *Service) loop(ctx context.Context, r *agent.Runner, interval time.Durat
 		if s.cancel != nil {
 			// 只有自己还是当前那一轮时才清状态，避免 Stop 后重启被旧循环覆盖。
 			s.running = false
+			s.nextPoll = time.Time{}
 		}
 		st := s.statusLocked()
 		s.mu.Unlock()
@@ -633,6 +637,8 @@ func (s *Service) loop(ctx context.Context, r *agent.Runner, interval time.Durat
 		handled, err := r.RunOnce(ctx)
 		s.mu.Lock()
 		s.lastPoll = time.Now()
+		// 本轮结束（出稿可能跑了几分钟）之后再等一个间隔，才是下一轮。
+		s.nextPoll = s.lastPoll.Add(interval)
 		s.handled += handled
 		if err != nil {
 			s.lastErr = err.Error()
@@ -724,10 +730,15 @@ func (s *Service) statusLocked() StatusDTO {
 		tasks = append(tasks, *task)
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].StartedAt < tasks[j].StartedAt })
+	next := ""
+	if s.running && !s.nextPoll.IsZero() {
+		next = s.nextPoll.Format(time.RFC3339)
+	}
 	return StatusDTO{
 		Running:    s.running,
 		Me:         s.me,
 		LastPoll:   last,
+		NextPoll:   next,
 		LastError:  s.lastErr,
 		Handled:    s.handled,
 		Pending:    s.drafts.Pending(),

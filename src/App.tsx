@@ -136,15 +136,25 @@ export default function App() {
     }
   };
 
-  // 处理中的耗时每秒走一格，不用后端反复推状态。
+  // 每秒走一格：处理中的耗时和「下次扫描」的倒计时都靠它。
   const tasks = status?.tasks ?? [];
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (tasks.length === 0) return;
     setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [tasks.length]);
+  }, []);
+
+  const nextAt = status?.nextPoll ? Date.parse(status.nextPoll) : 0;
+  const untilNext = nextAt ? Math.max(0, Math.floor((nextAt - now) / 1000)) : 0;
+  const clockOf = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const p = (n: number) => String(n).padStart(2, "0");
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  };
+  const durOf = (seconds: number) =>
+    Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
 
   const elapsedOf = (task: TaskDTO) => {
     const started = Date.parse(task.startedAt);
@@ -188,9 +198,18 @@ export default function App() {
           <span className="ellipsis" title={config?.repos.join(", ")}>
             {config?.repos.join(", ") || "未配置仓库"}
           </span>
-          <span className="ellipsis">
+          <span className="ellipsis" title="上一轮结束时间">
             {status?.lastPoll ? "上次 " + status.lastPoll : "还没跑过"}
           </span>
+          {status?.running && (
+            <span className="ellipsis" title={status.nextPoll ? "预计开始时间 " + clockOf(status.nextPoll) : ""}>
+              {tasks.length > 0
+                ? "本轮处理中…"
+                : status.nextPoll && untilNext > 0
+                  ? "下次 " + clockOf(status.nextPoll) + "（" + durOf(untilNext) + " 后）"
+                  : "即将开始下一轮…"}
+            </span>
+          )}
         </div>
       </aside>
 
