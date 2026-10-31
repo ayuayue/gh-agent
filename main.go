@@ -53,13 +53,8 @@ func main() {
 	mygo.Bind(svc)
 
 	app.WhenReady(func() {
-		// 菜单留着（快捷键靠它），但工具栏默认藏起来：按 Alt/F10 才出现。
-		app.SetMenu(mygo.NewMenu([]*mygo.MenuItem{
-			{Role: mygo.RoleAppMenu},
-			{Role: mygo.RoleEditMenu},
-			{Role: mygo.RoleViewMenu},
-			{Role: mygo.RoleWindowMenu},
-		}))
+		// 不装原生菜单：Edit / View / Window 那排不想要。
+		// WebView2 自己处理输入框里的复制粘贴，托盘菜单负责开始 / 停止 / 退出。
 
 		// 待审草稿来了弹系统通知：点通知回到窗口。
 		app.OnNotificationClick(func(id string) { showWindow() })
