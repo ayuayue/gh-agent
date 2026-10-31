@@ -220,6 +220,7 @@ export default function Drafts({
                 {d.type === "bug" && <span className="tag type-bug">Bug</span>}
                 {d.type === "feature" && <span className="tag type-feature">Feature</span>}
                 {d.merge && <span className="tag merge">可合并 PR</span>}
+                {d.mergedTo && <span className="tag merged">已合并到 {d.mergedTo}</span>}
                 <span className="author">{d.author}</span>
                 <span className="sep">·</span>
                 <time>{fmtTime(d.createdAt)}</time>
@@ -255,7 +256,11 @@ export default function Drafts({
             {!isEditing && d.changes && (
               <>
                 <Changes changes={d.changes} />
-                {d.commit ? (
+                {d.mergedTo ? (
+                  <p className="commit-hint">
+                    改动已自动合并到 <code>{d.mergedTo}</code>（分支 <code>{d.branch}</code>），批准只发回复
+                  </p>
+                ) : d.commit ? (
                   <p className="commit-hint">
                     改动已自动提交到 <code>{d.branch}</code>（{d.commit.slice(0, 7)}），批准只发回复
                   </p>

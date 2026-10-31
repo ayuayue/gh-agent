@@ -72,7 +72,9 @@ type Draft struct {
 	Branch string `json:"branch,omitempty"`
 	Commit string `json:"commit,omitempty"`
 	// Merge 表示 PR 审查结论是「可以合并」，批准时会先合并再回帖。
-	Merge     bool   `json:"merge,omitempty"`
+	Merge bool `json:"merge,omitempty"`
+	// MergedTo 是审查后已自动合入的基准分支（比如 dev）；为空表示没合。
+	MergedTo  string `json:"mergedTo,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`

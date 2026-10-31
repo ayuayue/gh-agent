@@ -516,9 +516,22 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 	}
 	defer s.locks.Unlock(key)
 
+	// 和审查一样在隔离 worktree 里跑，别动用户当前分支。
+	ws, wsErr := s.newWorkspace(cfg, d.Repo, d.Number)
+	if wsErr != nil {
+		s.logf("  ! %s#%d 建隔离 worktree 失败（%v），退回共用目录", d.Repo, d.Number, wsErr)
+	} else {
+		defer ws.close(false)
+	}
+
 	responder, err := bootstrap.ResponderFor(cfg, agentID, s.logf)
 	if err != nil {
 		return d, err
+	}
+	if ws != nil {
+		if acpResponder, ok := responder.(*acp.Responder); ok {
+			acpResponder.Workdir = func(string) string { return ws.dir }
+		}
 	}
 	s.logf("用 %s 重做 %s#%d…", responder.Label(), d.Repo, d.Number)
 
@@ -532,7 +545,7 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		StartedAt:  time.Now().Format(time.RFC3339),
 	}, cancel)
 	defer s.finishTask(key)
-	out, err := responder.Respond(ctx, agent.Request{Repo: d.Repo, System: bootstrap.Instructions(cfg), User: d.Prompt})
+	out, err := responder.Respond(ctx, agent.Request{Repo: d.Repo, System: bootstrap.ReviewInstructions(cfg), User: d.Prompt})
 	if err != nil {
 		return d, err
 	}
@@ -541,11 +554,33 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		return d, errors.New("agent 返回了空正文")
 	}
 
+	branch, commit, mergedTo := "", "", ""
+	if ws != nil {
+		msg := commitMessage(Draft{Number: d.Number, Title: d.Title, Agent: responder.Label(), CommentURL: d.CommentURL}, true)
+		sha, err := ws.commit(msg)
+		if err != nil {
+			s.logf("自动提交失败（改动还在隔离工作区）：%v", err)
+		} else if sha != "" {
+			branch, commit = ws.branch, sha
+		}
+		ws.close(true)
+		if commit != "" {
+			if err := ws.mergeIntoBase("[gh-agent] 合并 " + ws.branch + " 到 " + ws.base); err != nil {
+				s.logf("没有合到 %s：%v（改动保留在分支 %s）", ws.base, err, ws.branch)
+			} else {
+				mergedTo = ws.base
+			}
+		}
+	}
+
 	updated, _ := s.drafts.Update(id, func(x *Draft) {
 		x.Body = body
 		x.Agent = responder.Label()
 		x.CreatedAt = time.Now().Format(time.RFC3339)
 		x.Changes = out.Changes
+		x.Branch = branch
+		x.Commit = commit
+		x.MergedTo = mergedTo
 		x.Error = ""
 	})
 	EventDraft.Broadcast(updated)

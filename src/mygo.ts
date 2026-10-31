@@ -86,6 +86,8 @@ export interface Draft {
   commit?: string;
   /** Merge 表示 PR 审查结论是「可以合并」，批准时会先合并再回帖。 */
   merge?: boolean;
+  /** MergedTo 是审查后已自动合入的基准分支（比如 dev）；为空表示没合。 */
+  mergedTo?: string;
   createdAt: string;
   status: string;
   error?: string;
