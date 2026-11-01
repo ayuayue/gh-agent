@@ -105,3 +105,41 @@ func MergeBranch(repo, branch, message string) error {
 	_, err := git(repo, "merge", "--no-ff", "--no-edit", "-m", message, branch)
 	return err
 }
+
+// ProbeMerge 只算不合：把 branch 合进 base 会不会冲突，不切分支、不动工作区、不建提交。
+// 返回冲突的文件路径，空表示能自动合（也就是「合了不影响基准分支」）。
+// git 太老（没有 merge-tree --write-tree）时返回错误，调用方当「判断不了」处理。
+func ProbeMerge(repo, base, branch string) ([]string, error) {
+	out, code, err := gitRun(repo, "merge-tree", "--write-tree", "--name-only", base, branch)
+	if err != nil {
+		return nil, err
+	}
+	switch code {
+	case 0:
+		return nil, nil
+	case 1:
+		return conflictPaths(out), nil
+	default:
+		return nil, fmt.Errorf("git merge-tree 返回 %d", code)
+	}
+}
+
+// conflictPaths 从 merge-tree --write-tree 的输出里取冲突文件：
+// 第一行是结果树 oid，之后到第一个空行为止才是冲突路径（再往后是给人看的说明）。
+func conflictPaths(out string) []string {
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	files := make([]string, 0, len(lines))
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+		files = append(files, line)
+	}
+	if len(files) == 0 {
+		files = []string{"（git 没给出冲突文件名）"}
+	}
+	return files
+}

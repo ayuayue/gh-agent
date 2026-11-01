@@ -64,11 +64,34 @@ func (w *agentWorkspace) commit(message string) (string, error) {
 	return worktree.CommitAll(w.dir, message)
 }
 
-// mergeIntoBase 把分支合回基准分支。只在主仓库正检出于基准分支、
-// 且工作区干净时才动手；否则保持分支不动，让用户自己合。
-func (w *agentWorkspace) mergeIntoBase(message string) error {
-	if err := worktree.CanMerge(w.repoDir, w.base); err != nil {
-		return err
+// mergeBranchIntoBase 把 branch 合回 base，并把「能不能自动合」说清楚：
+// 合上了返回合到哪个分支；合不了返回人看得懂的阻塞原因（空串表示已合上）。
+func mergeBranchIntoBase(repoDir, branch, base, message string) (string, string) {
+	if repoDir == "" || branch == "" || base == "" {
+		return "", "缺仓库或分支信息，本地没法合并"
 	}
-	return worktree.MergeBranch(w.repoDir, w.branch, message)
+	// 先看主仓库能不能动手（不是在 base、或者有未提交改动），
+	// 再算冲突：否则白算一遍。
+	if err := worktree.CanMerge(repoDir, base); err != nil {
+		return "", err.Error()
+	}
+	conflicts, err := worktree.ProbeMerge(repoDir, base, branch)
+	if err != nil {
+		return "", "判断不了会不会冲突：" + err.Error()
+	}
+	if len(conflicts) > 0 {
+		return "", "和 " + base + " 冲突：" + strings.Join(conflicts, "、")
+	}
+	if err := worktree.MergeBranch(repoDir, branch, message); err != nil {
+		return "", err.Error()
+	}
+	return base, ""
+}
+
+// autoMerge 试着自己合回基准分支；合不了就把原因交给上层写进草稿等人决定。
+func (w *agentWorkspace) autoMerge(message string) (string, string) {
+	if w == nil {
+		return "", ""
+	}
+	return mergeBranchIntoBase(w.repoDir, w.branch, w.base, message)
 }

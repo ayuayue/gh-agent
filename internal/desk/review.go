@@ -162,11 +162,13 @@ func (s *Service) reviewIssue(ctx context.Context, cfg config.Config, me, repo s
 		}
 		ws.close(true) // 先摘 worktree，合并要在主仓库里做
 		if draft.Commit != "" {
-			if err := ws.mergeIntoBase("[gh-agent] 合并 " + ws.branch + " 到 " + ws.base); err != nil {
-				s.logf("没有合到 %s：%v（改动保留在分支 %s）", ws.base, err, ws.branch)
+			mergedTo, blocked := ws.autoMerge("[gh-agent] 合并 " + ws.branch + " 到 " + ws.base)
+			if blocked != "" {
+				draft.MergeBlocked = blocked
+				s.logf("没有自动合到 %s：%s（分支 %s 保留，等确认是否合并）", ws.base, blocked, ws.branch)
 			} else {
-				draft.MergedTo = ws.base
-				s.logf("已合并 %s 到 %s", ws.branch, ws.base)
+				draft.MergedTo = mergedTo
+				s.logf("已合并 %s 到 %s", ws.branch, mergedTo)
 			}
 		}
 	} else if out.Changes != nil && len(out.Changes.Files) > 0 {

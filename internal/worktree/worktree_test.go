@@ -167,6 +167,67 @@ func TestCommitToBranchNoChanges(t *testing.T) {
 	}
 }
 
+// TestProbeMergeReportsConflicts 探针要能看出「合进来会不会冲突」，且不动工作区。
+func TestProbeMergeReportsConflicts(t *testing.T) {
+	dir := setupRepo(t)
+	base := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+
+	// 分支上改 a.txt
+	gitRun(t, dir, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("branch side\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "commit", "-q", "-am", "branch")
+	gitRun(t, dir, "checkout", "-q", base)
+
+	// 基准分支上改同一行，两边合起来必冲突
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("base side\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "commit", "-q", "-am", "base")
+
+	head := gitOut(t, dir, "rev-parse", "HEAD")
+	conflicts, err := worktree.ProbeMerge(dir, base, "feature")
+	if err != nil {
+		t.Skipf("git 太老，没有 merge-tree --write-tree：%v", err)
+	}
+	if len(conflicts) != 1 || conflicts[0] != "a.txt" {
+		t.Errorf("应报出冲突文件 a.txt，得到 %v", conflicts)
+	}
+	// 探针碰过的东西：不能切分支、不能建提交、不能留脏文件
+	if now := gitOut(t, dir, "rev-parse", "HEAD"); now != head {
+		t.Errorf("探针不该动 HEAD：%s -> %s", head, now)
+	}
+	if now := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); now != base {
+		t.Errorf("探针不该切分支，得到 %s", now)
+	}
+	if status := gitOut(t, dir, "status", "--porcelain"); status != "" {
+		t.Errorf("探针不该留下未提交改动：%q", status)
+	}
+}
+
+// TestProbeMergeCleanBranch 不冲突时返回空，调用方据此直接合。
+func TestProbeMergeCleanBranch(t *testing.T) {
+	dir := setupRepo(t)
+	base := gitOut(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
+
+	gitRun(t, dir, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("new file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "add", "b.txt")
+	gitRun(t, dir, "commit", "-q", "-m", "branch")
+	gitRun(t, dir, "checkout", "-q", base)
+
+	conflicts, err := worktree.ProbeMerge(dir, base, "feature")
+	if err != nil {
+		t.Skipf("git 太老，没有 merge-tree --write-tree：%v", err)
+	}
+	if len(conflicts) != 0 {
+		t.Errorf("不该报冲突，得到 %v", conflicts)
+	}
+}
+
 // gitOut 跑一条 git 命令并返回输出（去尾部空白）。
 func gitOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()

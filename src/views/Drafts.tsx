@@ -4,6 +4,7 @@ import {
   ChevronIcon,
   ExternalIcon,
   EyeOffIcon,
+  GitCommitIcon,
   InboxIcon,
   RefreshIcon,
   XIcon,
@@ -21,6 +22,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const CLAMP_AT = 320;
+
+// MERGE_HINT_PLACEHOLDER 提示用户能写什么：合并说明是给 agent 看的下一轮要求。
+const MERGE_HINT_PLACEHOLDER =
+  "合并说明（可选）：怎么合、按什么合，比如「只保留 src/main 下的改动」「先 rebase 到 dev 再合」。填了会按这条说明重做一遍再合";
 
 function fmtTime(iso: string) {
   const d = new Date(iso);
@@ -47,6 +52,8 @@ export default function Drafts({
   const [redo, setRedo] = useState<Record<string, string>>({});
   const [ignoring, setIgnoring] = useState<string | null>(null);
   const [ignoreNote, setIgnoreNote] = useState("");
+  const [merging, setMerging] = useState<string | null>(null);
+  const [mergeNote, setMergeNote] = useState("");
   const [repoFilter, setRepoFilter] = useState("");
 
   useEffect(() => {
@@ -117,6 +124,35 @@ export default function Drafts({
     } finally {
       setBusy("");
     }
+  };
+
+  // 合并卡住的草稿：待审的可以写一条「怎么合 / 按什么合」让 agent 重做再合，
+  // 已经发出去的没得重做（正文已上 GitHub），只能直接重试一次合并。
+  const doMerge = (d: Draft, hint: string) => {
+    setBusy(d.id + "|merge");
+    setError("");
+    void (async () => {
+      try {
+        await Service.mergeDraft(d.id, hint);
+        setMerging(null);
+        setMergeNote("");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy("");
+        onChanged();
+      }
+    })();
+  };
+
+  const startMerge = (d: Draft) => {
+    setError("");
+    if (d.status !== "pending") {
+      doMerge(d, "");
+      return;
+    }
+    setMerging(d.id);
+    setMergeNote(d.mergeHint ?? "");
   };
 
   const restore = async (id: string) => {
@@ -264,7 +300,8 @@ export default function Drafts({
                   </p>
                 ) : d.commit ? (
                   <p className="commit-hint">
-                    改动已自动提交到 <code>{d.branch}</code>（{d.commit.slice(0, 7)}），批准只发回复
+                    改动已提交到 <code>{d.branch}</code>（{d.commit.slice(0, 7)}）
+                    {d.mergeBlocked ? "，没自动合上，需要你定一下要不要合" : "，批准只发回复"}
                   </p>
                 ) : (
                   <p className="commit-hint">
@@ -273,6 +310,45 @@ export default function Drafts({
                   </p>
                 )}
               </>
+            )}
+
+            {!isEditing &&
+              d.status !== "rejected" &&
+              d.status !== "ignored" &&
+              d.status !== "failed" &&
+              d.commit &&
+              !d.mergedTo &&
+              merging !== d.id && (
+              <div className="merge-row">
+                <button className="ghost" onClick={() => startMerge(d)} disabled={working}>
+                  <GitCommitIcon size={14} />
+                  {d.mergeBlocked ? "是否合并" : "合并到基准分支"}
+                </button>
+                {d.mergeBlocked ? (
+                  <span className="merge-blocked">{d.mergeBlocked}</span>
+                ) : (
+                  <span className="merge-note">改动与基准分支不冲突，可以直接合</span>
+                )}
+              </div>
+            )}
+
+            {!isEditing && merging === d.id && (
+              <div className="merge-row">
+                <input
+                  value={mergeNote}
+                  onChange={(e) => setMergeNote(e.target.value)}
+                  placeholder={MERGE_HINT_PLACEHOLDER}
+                  spellCheck={false}
+                  autoFocus
+                />
+                <button className="ghost" onClick={() => setMerging(null)} disabled={working}>
+                  取消
+                </button>
+                <button className="primary" onClick={() => doMerge(d, mergeNote)} disabled={working}>
+                  <GitCommitIcon size={14} />
+                  {kind === "merge" ? "合并中…" : mergeNote.trim() ? "按说明重做并合并" : "重试合并"}
+                </button>
+              </div>
             )}
 
             <div className="draft-foot">

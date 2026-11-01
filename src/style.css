@@ -816,6 +816,25 @@ input:focus {
 }
 .ignore-row input { flex: 1; min-width: 0; }
 
+/* ---------- 合并（是否合并） ---------- */
+.merge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  flex-wrap: wrap;
+}
+.merge-row input { flex: 1; min-width: 220px; }
+.merge-blocked {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--danger) 78%, var(--text));
+  word-break: break-word;
+}
+.merge-note { font-size: 11.5px; color: var(--text-3); }
+
 /* ---------- 条目列表 ---------- */
 .items { display: flex; flex-direction: column; gap: 14px; }
 

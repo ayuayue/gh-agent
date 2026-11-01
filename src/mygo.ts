@@ -122,6 +122,13 @@ export interface Draft {
   merge?: boolean;
   /** MergedTo 是审查后已自动合入的基准分支（比如 dev）；为空表示没合。 */
   mergedTo?: string;
+  /**
+   * MergeBlocked 是没自动合上的原因：冲突、主仓库不干净、不在基准分支…
+   * 有值就说明这条在等用户决定「是否合并」，空表示已合或没有改动要合。
+   */
+  mergeBlocked?: string;
+  /** MergeHint 是用户给的合并说明（怎么合、按什么合），带说明会先重做再合。 */
+  mergeHint?: string;
   createdAt: string;
   status: string;
   error?: string;
@@ -309,6 +316,16 @@ export const Service = {
   /** Logs 返回运行日志，旧的在前。 */
   logs(): Promise<LogLine[]> {
     return call("Service.Logs");
+  },
+  /**
+   * MergeDraft 是界面上的「是否合并」：分支有改动但没自动合上时由人来定。
+   *
+   * 不带说明：只重试一次合并——分支和提交都还在，用户可能刚把主仓库收拾干净。
+   * 带说明：按说明重新做一遍这一轮（agent 在最新的基准分支上重改、重提交）再合，
+   * 冲突基本都是基准分支走远了，重做一遍最干净。
+   */
+  mergeDraft(id: string, hint: string): Promise<Draft> {
+    return call("Service.MergeDraft", id, hint);
   },
   /** OpenExternal 用系统浏览器打开链接（webview 里直接点链接会把页面导航走）。 */
   openExternal(url: string): Promise<void> {

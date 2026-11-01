@@ -4,8 +4,10 @@
 package worktree
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os/exec"
 	"sort"
 	"strings"
@@ -172,4 +174,23 @@ func git(dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// gitRun 和 git 一样，但把退出码和 stdout 一起带回来。
+// merge-tree 在「有冲突」时返回 1，而冲突文件列表就在 stdout 里，不能当失败丢掉。
+func gitRun(dir string, args ...string) (string, int, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	winproc.Hide(cmd)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), 0, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return stdout.String(), exit.ExitCode(), nil
+	}
+	return stdout.String(), -1, err
 }

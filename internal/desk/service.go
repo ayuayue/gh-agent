@@ -498,6 +498,13 @@ func (s *Service) Agents() []AgentInfo {
 
 // Redraft 用指定的 agent 把同一条评论重新出一遍稿，覆盖原来那条。
 func (s *Service) Redraft(id, agentID string) (Draft, error) {
+	return s.redraft(id, agentID, "")
+}
+
+// redraft 是重做的实现。hint 是用户写的「怎么合 / 按什么合」的合并说明：
+// 有说明时跟着 prompt 一起交给 agent，让它在新基准上按这个要求改，
+// 改完再重新提交并合回基准分支。
+func (s *Service) redraft(id, agentID, hint string) (Draft, error) {
 	d, ok := s.drafts.Get(id)
 	if !ok {
 		return Draft{}, errors.New("草稿不存在")
@@ -548,7 +555,7 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		StartedAt:  time.Now().Format(time.RFC3339),
 	}, cancel)
 	defer s.finishTask(key)
-	out, err := responder.Respond(ctx, agent.Request{Repo: d.Repo, System: bootstrap.ReviewInstructions(cfg), User: d.Prompt})
+	out, err := responder.Respond(ctx, agent.Request{Repo: d.Repo, System: bootstrap.ReviewInstructions(cfg), User: mergePrompt(d.Prompt, hint)})
 	if err != nil {
 		return d, err
 	}
@@ -557,7 +564,7 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		return d, errors.New("agent 返回了空正文")
 	}
 
-	branch, commit, mergedTo := "", "", ""
+	branch, commit, mergedTo, blocked := "", "", "", ""
 	if ws != nil {
 		msg := commitMessage(Draft{Number: d.Number, Title: d.Title, Agent: responder.Label(), CommentURL: d.CommentURL}, true)
 		sha, err := ws.commit(msg)
@@ -568,10 +575,11 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		}
 		ws.close(true)
 		if commit != "" {
-			if err := ws.mergeIntoBase("[gh-agent] 合并 " + ws.branch + " 到 " + ws.base); err != nil {
-				s.logf("没有合到 %s：%v（改动保留在分支 %s）", ws.base, err, ws.branch)
+			mergedTo, blocked = ws.autoMerge("[gh-agent] 合并 " + ws.branch + " 到 " + ws.base)
+			if blocked != "" {
+				s.logf("没有自动合到 %s：%s（分支 %s 保留，等确认是否合并）", ws.base, blocked, ws.branch)
 			} else {
-				mergedTo = ws.base
+				s.logf("已合并 %s 到 %s", ws.branch, mergedTo)
 			}
 		}
 	}
@@ -584,11 +592,88 @@ func (s *Service) Redraft(id, agentID string) (Draft, error) {
 		x.Branch = branch
 		x.Commit = commit
 		x.MergedTo = mergedTo
+		x.MergeBlocked = blocked
+		x.MergeHint = strings.TrimSpace(hint)
 		x.Error = ""
 	})
 	EventDraft.Broadcast(updated)
 	s.logf("%s 重做完成", responder.Label())
 	return updated, nil
+}
+
+// mergePrompt 把合并说明拼到原 prompt 后面。每次都从原 prompt 拼，
+// 反复重做不会把说明越垫越长。
+func mergePrompt(prompt, hint string) string {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return prompt
+	}
+	return strings.TrimRight(prompt, "\n") + "\n\n## 这次必须遵守的合并说明\n\n" + hint +
+		"\n\n按要求改完后，改动应能直接合进基准分支（不冲突、不动无关文件）。\n"
+}
+
+// MergeDraft 是界面上的「是否合并」：分支有改动但没自动合上时由人来定。
+//
+// 不带说明：只重试一次合并——分支和提交都还在，用户可能刚把主仓库收拾干净。
+// 带说明：按说明重新做一遍这一轮（agent 在最新的基准分支上重改、重提交）再合，
+// 冲突基本都是基准分支走远了，重做一遍最干净。
+func (s *Service) MergeDraft(id, hint string) (Draft, error) {
+	d, ok := s.drafts.Get(id)
+	if !ok {
+		return Draft{}, errors.New("草稿不存在")
+	}
+	if d.Status != "pending" && d.Status != "posted" {
+		return d, fmt.Errorf("这条草稿的状态是 %s，不能合并", d.Status)
+	}
+	if hint = strings.TrimSpace(hint); hint != "" {
+		if d.Status != "pending" {
+			return d, errors.New("已经发出去的草稿没法重做，只能直接重试合并")
+		}
+		return s.redraft(id, agentIDForLabel(d.Agent), hint)
+	}
+	if d.Commit == "" || d.Branch == "" {
+		return d, errors.New("这条草稿没有提交，没有要合并的东西")
+	}
+
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	key := taskKey(d.Repo, d.Number)
+	if !s.locks.TryLock(key) {
+		return d, errors.New("这个条目正在处理中，等它跑完再试")
+	}
+	defer s.locks.Unlock(key)
+
+	repoDir := bootstrap.RepoWorkdir(cfg, d.Repo)
+	base, err := worktree.BaseBranch(repoDir)
+	if err != nil {
+		return d, err
+	}
+	mergedTo, blocked := mergeBranchIntoBase(repoDir, d.Branch, base, "[gh-agent] 合并 "+d.Branch+" 到 "+base)
+	if blocked != "" {
+		out, _ := s.drafts.Update(id, func(x *Draft) { x.MergeBlocked = blocked })
+		EventDraft.Broadcast(out)
+		s.logf("还是没合上 %s#%d：%s", d.Repo, d.Number, blocked)
+		return out, errors.New(blocked)
+	}
+	out, _ := s.drafts.Update(id, func(x *Draft) {
+		x.MergedTo = mergedTo
+		x.MergeBlocked = ""
+	})
+	EventDraft.Broadcast(out)
+	s.logf("已合并 %s 到 %s（%s#%d）", d.Branch, mergedTo, d.Repo, d.Number)
+	return out, nil
+}
+
+// agentIDForLabel 把草稿里记的 agent 名字换回 id，认不出来就留空走默认出稿方。
+func agentIDForLabel(label string) string {
+	for _, info := range acp.Detect() {
+		if info.Name == label {
+			return info.ID
+		}
+	}
+	return ""
 }
 
 // UpdateDraft 改一条待审草稿的正文（人工润色后再发）。

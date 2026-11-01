@@ -79,7 +79,12 @@ type Draft struct {
 	// Merge 表示 PR 审查结论是「可以合并」，批准时会先合并再回帖。
 	Merge bool `json:"merge,omitempty"`
 	// MergedTo 是审查后已自动合入的基准分支（比如 dev）；为空表示没合。
-	MergedTo  string `json:"mergedTo,omitempty"`
+	MergedTo string `json:"mergedTo,omitempty"`
+	// MergeBlocked 是没自动合上的原因：冲突、主仓库不干净、不在基准分支…
+	// 有值就说明这条在等用户决定「是否合并」，空表示已合或没有改动要合。
+	MergeBlocked string `json:"mergeBlocked,omitempty"`
+	// MergeHint 是用户给的合并说明（怎么合、按什么合），带说明会先重做再合。
+	MergeHint string `json:"mergeHint,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	Status    string `json:"status"`
 	Error     string `json:"error,omitempty"`
