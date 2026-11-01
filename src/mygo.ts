@@ -274,6 +274,13 @@ export const Service = {
     return call("Service.ClearLogs");
   },
   /**
+   * CloseItem 关闭条目：填了原因就先发一条说明评论，再把 issue / PR 关掉。
+   * 关闭后把这条从列表和缓存里摘掉，条目下待审的草稿一并忽略。
+   */
+  closeItem(repo: string, number: number, note: string): Promise<ItemsSnapshot> {
+    return call("Service.CloseItem", repo, number, note);
+  },
+  /**
    * Config 返回当前配置。
    * 每次都从磁盘重读：用户直接改 config.json 也能在界面上看到。
    */

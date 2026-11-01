@@ -8,6 +8,7 @@ import {
   MessageIcon,
   RefreshIcon,
   SparklesIcon,
+  XIcon,
 } from "../icons";
 import Markdown from "../Markdown";
 import { Service, type Item, type ItemsSnapshot, type TaskDTO } from "../mygo";
@@ -63,6 +64,8 @@ export default function Items({
   const [expanded, setExpanded] = useState<string[]>([]);
   const [ignoring, setIgnoring] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [closing, setClosing] = useState<string | null>(null);
+  const [closeNote, setCloseNote] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
@@ -102,7 +105,30 @@ export default function Items({
   const startIgnore = (item: Item) => {
     setIgnoring(item.id);
     setNote(item.ignoreNote ?? "");
+    setClosing(null);
     setError("");
+  };
+
+  const startClose = (item: Item) => {
+    setClosing(item.id);
+    setCloseNote("");
+    setIgnoring(null);
+    setError("");
+  };
+
+  // 关闭：有原因就先发评论再关，没有就直接关。
+  const confirmClose = async (item: Item) => {
+    setBusy(item.id);
+    setError("");
+    try {
+      onSnapshot(await Service.closeItem(item.repo, item.number, closeNote));
+      setClosing(null);
+      setCloseNote("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy("");
+    }
   };
 
   const confirmIgnore = async (item: Item) => {
@@ -306,7 +332,34 @@ export default function Items({
                             忽略
                           </button>
                         )}
+                        <button
+                          className="ghost"
+                          onClick={() => startClose(item)}
+                          disabled={working || active}
+                          title={"直接关闭这个 " + (item.kind === "pr" ? "PR" : "issue") + "，可以附一句原因"}
+                        >
+                          <XIcon size={13} />
+                          关闭
+                        </button>
                       </div>
+
+                      {closing === item.id && (
+                        <div className="item-ignore">
+                          <input
+                            value={closeNote}
+                            onChange={(e) => setCloseNote(e.target.value)}
+                            placeholder="关闭原因（会作为评论发到这个条目，可留空）"
+                            spellCheck={false}
+                            autoFocus
+                          />
+                          <button className="ghost" onClick={() => setClosing(null)}>
+                            取消
+                          </button>
+                          <button className="danger" onClick={() => void confirmClose(item)} disabled={working}>
+                            {working ? "关闭中…" : closeNote.trim() ? "发评论并关闭" : "直接关闭"}
+                          </button>
+                        </div>
+                      )}
 
                       {ignoring === item.id && (
                         <div className="item-ignore">

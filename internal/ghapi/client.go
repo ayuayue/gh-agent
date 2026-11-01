@@ -199,6 +199,17 @@ func (c *Client) ListIssueCommentsSince(ctx context.Context, repo string, number
 	return comments, nil
 }
 
+// CloseIssue 关闭 issue / PR。reason 是 GitHub 的 state_reason
+// （completed / not_planned），留空只发 state=closed（PR 走这个）。
+func (c *Client) CloseIssue(ctx context.Context, repo string, number int, reason string) error {
+	body := map[string]any{"state": "closed"}
+	if reason != "" {
+		body["state_reason"] = reason
+	}
+	path := "/repos/" + repo + "/issues/" + strconv.Itoa(number)
+	return c.do(ctx, http.MethodPatch, path, body, nil)
+}
+
 // MergePullRequest 合并一个 PR。method 取 merge / squash / rebase，空值按 merge。
 func (c *Client) MergePullRequest(ctx context.Context, repo string, number int, method string) error {
 	if method == "" {

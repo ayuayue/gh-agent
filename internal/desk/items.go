@@ -350,6 +350,83 @@ func (s *Service) UnignoreItem(repo string, number int) (ItemsSnapshot, error) {
 	return s.markItemIgnored(repo, number, "", false), nil
 }
 
+// CloseItem 关闭条目：填了原因就先发一条说明评论，再把 issue / PR 关掉。
+// 关闭后把这条从列表和缓存里摘掉，条目下待审的草稿一并忽略。
+func (s *Service) CloseItem(repo string, number int, note string) (ItemsSnapshot, error) {
+	repo = strings.TrimSpace(repo)
+	if repo == "" || number <= 0 {
+		return s.Items(), errors.New("条目参数不对")
+	}
+	note = strings.TrimSpace(note)
+
+	token, err := bootstrap.ResolveToken()
+	if err != nil {
+		return s.Items(), err
+	}
+	client := ghapi.New(token)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	issue, err := client.GetIssue(ctx, repo, number)
+	if err != nil {
+		return s.Items(), fmt.Errorf("读取条目失败：%w", err)
+	}
+	if strings.EqualFold(issue.State, "closed") {
+		s.dropClosedItem(repo, number)
+		return s.Items(), errors.New("这个条目已经关闭了")
+	}
+
+	// 先发说明再关闭：关闭失败时评论已经在，不会出现「说关了其实没关」。
+	if note != "" {
+		if _, err := client.PostIssueComment(ctx, repo, number, note); err != nil {
+			return s.Items(), fmt.Errorf("说明评论没发出去，条目未关闭：%w", err)
+		}
+	}
+	// issue 标成「不打算修」；PR 没有这个字段，直接关。
+	reason := "not_planned"
+	if issue.IsPull() {
+		reason = ""
+	}
+	if err := client.CloseIssue(ctx, repo, number, reason); err != nil {
+		if note != "" {
+			return s.Items(), fmt.Errorf("关闭失败（说明评论已发）：%w", err)
+		}
+		return s.Items(), fmt.Errorf("关闭失败：%w", err)
+	}
+
+	s.logf("已关闭 %s#%d", repo, number)
+	s.dropClosedItem(repo, number)
+	for _, draft := range s.drafts.List() {
+		if draft.Repo != repo || draft.Number != number || draft.Status != "pending" {
+			continue
+		}
+		out, _ := s.drafts.Update(draft.ID, func(x *Draft) {
+			x.Status = "ignored"
+			x.Note = "条目已关闭"
+		})
+		EventDraft.Broadcast(out)
+	}
+	return s.Items(), nil
+}
+
+// dropClosedItem 把已关闭的条目从内存列表和磁盘缓存里摘掉。
+func (s *Service) dropClosedItem(repo string, number int) {
+	s.mu.Lock()
+	kept := make([]Item, 0, len(s.items))
+	for _, item := range s.items {
+		if item.Repo == repo && item.Number == number {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	s.items = kept
+	s.itemsAt = time.Now()
+	st := s.itemsSnapshotLocked()
+	s.mu.Unlock()
+	EventItems.Broadcast(st)
+	s.itemsCache.save(st.Items, s.itemsAt)
+}
+
 func (s *Service) markItemIgnored(repo string, number int, note string, ignored bool) ItemsSnapshot {
 	s.mu.Lock()
 	for i := range s.items {
